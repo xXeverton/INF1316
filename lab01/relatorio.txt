@@ -1,0 +1,19 @@
+[INF1316] Lab # - NomeAluno1, NomeAluno2, #TODO: Inserir
+
+1) Faça um programa para criar dois processos, o pai escreve seu pid e espera o
+filho terminar e o filho escreve o seu pid e termina.
+Resposta:
+O programa realizado atende ao que foi pedido utilizando a chamada de sistema fork() para clonar
+o processo inicial e criar um porcesso filho. Através da verificação do valor do retorno do 
+fork() (onde o filho recebe 0 e o pai recebe o PID do filho), o código é direcionado para 
+diferentes blocos de execução usnado if/else.
+
+No bloco do processo pai, ele imprime o seu próprio PID e logo em seguida invoca a função 
+waitpid(). Essa função faz com que a execução do pai fique bloqueada, aguardando que o 
+processo filho termine.
+
+Em paralelo, no bloco do processo filho, ele imprime o seu próprio PID e imediatamente
+chama a função exit(0), encerrando suas tarefas. O encerramento do filho libera o pai
+do bloqueio do waitpid(), permitindo que o pai valide que tudo terminou bem (através do
+WIFEXITED(status)) e encerre o programa como um todo.
+
