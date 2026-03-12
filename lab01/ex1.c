@@ -4,30 +4,29 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+int main(void) {
 
-int main(void)
-{
     int mypid, pid, status;
 
     pid = fork();
 
-    if (pid != 0)
-    {
+    if (pid != 0){
+
         mypid = getpid();
-        printf("Parent PID: %d\n", mypid);
+        printf("PID Pai: %d\n", mypid);
+
         waitpid(-1, &status, 0);
 
         if (!WIFEXITED(status)) printf("O processo nao terminou corretamente\n");
-
     }
-    else
-    {
+
+    else {
+
         mypid = getpid();
-        printf("Child PID: %d\n", mypid);
+        printf("PID Filho: %d\n", mypid);
         
         exit(0);
     }
 
     return 0;
-
 }
