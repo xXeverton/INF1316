@@ -1,4 +1,4 @@
-[INF1316] Lab 01 Everton Pereira Militão, Lúcio Campos - 2320955
+[INF1316] Lab 01 Everton Pereira Militão - 2320462, Lúcio Campos - 2320955
 
 1) Faça um programa para criar dois processos, o pai escreve seu pid e espera o
 filho terminar e o filho escreve o seu pid e termina.
