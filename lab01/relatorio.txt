@@ -1,0 +1,120 @@
+[INF1316] Lab 01 Everton Pereira Militão - 2320462, Lúcio Campos - 2320955
+
+1) Faça um programa para criar dois processos, o pai escreve seu pid e espera o
+filho terminar e o filho escreve o seu pid e termina.
+
+RESPOSTA:
+
+O programa realizado atende ao que foi pedido utilizando a chamada de sistema fork() para clonar
+o processo inicial e criar um processo filho. Através da verificação do valor do retorno do 
+fork() (onde o filho recebe 0 e o pai recebe o PID do filho), o código é direcionado para 
+diferentes blocos de execução usando if/else.
+
+No bloco do processo pai, ele imprime o seu próprio PID e logo em seguida invoca a função 
+waitpid(). Essa função faz com que a execução do pai fique bloqueada, aguardando que o 
+processo filho termine.
+
+Em paralelo, no bloco do processo filho, ele imprime o seu próprio PID e imediatamente
+chama a função exit(0), encerrando suas tarefas. O encerramento do filho libera o pai
+do bloqueio do waitpid(), permitindo que o pai valide que tudo terminou bem (através do
+WIFEXITED(status)) e encerre o programa como um todo.
+
+Para executar o programa do exercício 1 utilize o seguinte arquivo e comando:
+- arquivo: ex1.c
+- comando: gcc -Wall ex1.c -o ex1
+- execução: ./ex1
+
+Saída:
+PID Pai: 9892
+PID Filho: 9893
+
+2) Agora, usando a mesma estrutura de processos pai e filho, declare uma
+variável visível ao pai e ao filho, no pai inicialize a variável com1 e imprima seu
+valor antes do fork(). No filho, altere o valor da variável para 5 e imprima o seu
+valor antes do exit(). Agora, no pai, imprima novamente o valor da variável após o
+filho ter alterado a variável - após a waitpid(). Justifique os resultados obtidos.
+
+RESPOSTA:
+
+Ao executar o programa, observamos que o valor da variável numero impresso pelo 
+processo pai ao final da execução continuou sendo 1, mesmo após o processo filho
+ter alterado a variável para 5.
+
+Isso acontece porque a chamada de sistema fork() cria um processo filho que é uma
+cópia idêntica do processo pai, mas a partir desse momento, ambos passam a executar
+em espaços de memória isolados e independentes. O sistema operacional cria cópias
+dos segmentos de memória para o novo processo.
+
+Assim, quando processo filho altera o valor da variável para 5, ele está modificando
+apenas a sua própria cópia privada na memória. A variável original do processo pai 
+permanece intacta, o que demonstra o mecanismo do sistema operacional de garantir o 
+isolamanto e a proteção entre processos.
+
+Para executar o programa do exercício 2 utilize o seguinte arquivo e comando:
+- arquivo: ex2.c
+- comando: gcc -Wall ex2.c -o ex2
+- execução: ./ex2
+
+Saída:
+Numero = 1 (antes do processo pai)
+PID Pai: 10191
+Filho PID: 10192
+Numero = 5 (durante processo filho)
+Numero = 1 (apos processo filho)
+
+3) ) Use o programa anterior para ler e ordenar um vetor de 10 posições. O filho
+ordena o vetor e o pai exibe os dados do vetor antes do fork() e depois do
+waitpid(). Eles usarão o mesmo vetor na memória? Justifique.
+
+RESPOSTA: 
+
+Não. Após a chamada de fork(), o sistema operacional cria um novo processo (filho) 
+com uma cópia do espaço de memória do processo pai. Assim, o vetor existente no pai 
+é duplicado para o filho. Cada processo passa a ter sua própria versão do vetor na memória. 
+Quando o filho ordena o vetor, a alteração ocorre apenas na sua cópia. Portanto, o vetor 
+do pai permanece inalterado mesmo após o waitpid().
+
+Para executar o programa do exercício 3 utilize o seguinte arquivo e comando:
+- arquivo: ex3.c
+- comando: gcc -Wall ex3.c -o ex3
+- execução: ./ex3
+
+Saída:
+Vetor (antes do fork):
+7 9 2 3 1 8 4 6 5 0 
+Filho: vetor ordenado: 0 1 2 3 4 5 6 7 8 9 
+Pai: vetor depois do wait:
+7 9 2 3 1 8 4 6 5 0 
+
+4) Modifique o programa anterior para que o filho execute um programa elaborado 
+por você, que mande imprimir uma mensagem qualquer no vídeo, por exemplo, 
+“alo mundo”. Em seguida altere o programa do item 4 para o filho executar o 
+programa echo da shell.
+RESPOSTA: Para que o processo filho mude sua tarefa e execute um programa diferente, utiliza-se
+a exec() (neste caso, execl e execlp). O que acontece é que o exec() substitui completamente o
+espaço de endereçamento (código, dados e pilha) do processo atual para carregar e iniciar a 
+execução do novo programa solicitado.
+
+Por causa dessa substituição de imagem do processo, qualquer linha de código que esteja escrita no
+arquivo original C logo abaixo da chamada do exec() (como o printf("Erro..."); exit(1);) jamais será
+executada em um cenário de sucesso. O programa antigo deixa de existir na memória daquele processo,
+dando lugar ao novo executável (alo_mundo na parte 1, e o utilitário nativo echo na parte 2), que
+passará a imprimir a mensagem solicitada e cuidará do seu próprio encerramento, retornando o controle
+ao processo pai que estava bloqueado no waitpid().
+- arquivo: ex4.c, processo.c
+- comando: gcc -Wall processo.c -o processo
+- comando: gcc -Wall ex4.c -o ex4
+- execução: ./ex4
+
+
+Saída exercício 4 parte 1:
+Parent PID: 11068
+Child PID: 11069
+Hello World!
+
+OBS.: Ao executar a parte 2, favor comentar a linha 29 do arquivo ex4.c
+
+Saída exercício 4 parte 2:
+Parent PID: 12241
+Child PID: 12242
+alo mundo
