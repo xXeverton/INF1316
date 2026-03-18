@@ -1,0 +1,12 @@
+[INF1316] Lab 02 Everton Pereira Militão - 2320462, Lúcio Campos - 2320955
+
+1) Soma de matrizes
+Faça um programa para somar matrizes de acordo com o seguinte algoritmo 
+l O primeiro processo irá criar duas matrizes preenchidas e uma terceira
+vazia em 3 áreas de memória compartilhada. l Para cada linha da matriz
+solução, o seu programa deverá gerar um processo para o seu cálculo.
+OBS: implemente as matrizes como vetores de tamanho (linha x coluna)
+e aloque a shared memory para os vetores correspondentes, pois acessar
+os elementos (i,j) é complexo.
+
+RESPOSTA: 
