@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-
 int main() {
     int segmento;
     char *p; //char para guardar a msg

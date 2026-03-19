@@ -10,3 +10,73 @@ e aloque a shared memory para os vetores correspondentes, pois acessar
 os elementos (i,j) é complexo.
 
 RESPOSTA: 
+
+2) Mensagem do Dia
+
+Faça um programa que:
+
+- Leia uma mensagem do dia do stdin (ou arquivo)
+- Crie uma memória compartilhada com a chave 8752
+- Salve a mensagem na memória
+
+Faça um outro programa “cliente” que utilize a mesma chave (8752) e exiba 
+a mensagemdo dia para o usuário
+
+RESPOSTA:
+
+Ao fazer esse programa, consegui implementar uma forma de comunicação entre dois 
+processos usando memória compartilhada. No servidor, usei o shmget() para criar 
+um espaço de memória com a chave 8752 e depois conectei esse espaço ao programa com 
+o shmat(). A partir disso, li uma mensagem digitada pelo usuário com fgets() e 
+armazenei diretamente nessa memória, deixando o conteúdo disponível para outros processos.
+
+No cliente, utilizei a mesma chave para acessar essa memória já criada pelo servidor. Com o 
+shmat(), consegui conectar essa região ao programa e ler a mensagem que estava lá, exibindo 
+na tela. Com isso, deu para perceber na prática como a memória compartilhada permite que 
+processos diferentes troquem informações entre si, ao contrário do que acontece com o fork(), 
+onde cada processo tem sua própria cópia da memória.
+
+Para executar o programa do exercício 2 utilize o seguinte arquivo e comando:
+- arquivo: ex2_servidor.c e ex2_cliente.c
+- comando: gcc ex2_servidor.c -o servidor - gcc ex2_cliente.c -o cliente
+- execução: ./servidor - ./cliente
+
+Saída:
+Servidor: Digite a mensagem do dia: rainha
+Cliente: Mensagem do Dia recebida: rainha
+
+3) Busca Paralela em Vetor
+
+Faça um programa paralelo (com pelo menos 4 processos) para localizar uma 
+chave em um vetor.
+- Crie uma memória compartilhada com dados numéricos inteiros e desordenados 
+e a divida pelo número de processos
+- Cada processo deve procurar o dado na sua área de memória e informar a posição [
+onde o dado foi localizado.
+
+RESPOSTA:
+
+Ao fazer esse programa, consegui implementar uma busca paralela utilizando múltiplos 
+processos e memória compartilhada. Inicialmente, usei o shmget() para criar um espaço 
+de memória onde armazenei um vetor de números inteiros desordenados, e depois conectei 
+esse espaço ao programa com o shmat(). Dessa forma, todos os processos criados 
+conseguem acessar o mesmo vetor na memória.
+
+Em seguida, utilizei o fork() para criar múltiplos processos e dividi o vetor em 
+partes iguais entre eles. Cada processo ficou responsável por buscar a chave apenas em 
+sua parte do vetor, e quando encontrava o valor, imprimia a posição correspondente. 
+Com isso, consegui observar na prática como o uso de múltiplos processos permite realizar 
+a busca de forma paralela, tornando a execução mais eficiente e aproveitando melhor os recursos 
+do sistema.
+
+Para executar o programa do exercício 3 utilize o seguinte arquivo e comando:
+
+- arquivo: ex3.c
+- comando: gcc ex3.c -o ex3
+- execução: ./ex3
+
+Saída:
+Buscando chave: 7
+Processo 69048 encontrou na posicao 4
+Processo 69050 encontrou na posicao 12
+Processo 69051 encontrou na posicao 15
