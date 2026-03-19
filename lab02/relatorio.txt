@@ -10,3 +10,34 @@ e aloque a shared memory para os vetores correspondentes, pois acessar
 os elementos (i,j) é complexo.
 
 RESPOSTA: 
+O programa realiza a soma das matrizes em paralelo alocando áreas de
+Memória Compartilhada através do shmget e as anexando aos processos com o shmat.
+O processo pai utiliza um laço com fork() para criar um processo filho 
+exclusivo para calcular cada linha da matriz. 
+
+O paralelismo é comprovado pela saída no terminal: os PIDs dos filhos
+aparecem fora de ordem (0, 2 e 1), já que o escalonador do Sistema Operacional 
+intercala a execução de forma concorrente.
+
+Como a memória compartilhada permite leitura e escrita diretas sem a intervenção do 
+núcleo (kernel), os filhos gravam os resultados rapidamente na Matriz C. 
+Em seguida, desconectam-se da memória com shmdt e encerram com exit(0).
+
+Para evitar a impressão de uma matriz incompleta, o processo pai utiliza um laço com wait(NULL)
+para aguardar que todos os filhos terminem seus cálculos. Por fim, o pai libera os recursos do 
+sistema destruindo a área de memória com o comando shmctl e a flag IPC_RMID
+
+Para executar o programa do exercício 1 utilize o seguinte arquivo e comando:
+- arquivo: ex1.c
+- comando: gcc -Wall ex1.c -o ex1
+- execução: ./ex1
+
+Saída:
+PID Filho: 29527 - PROCESSO: 0
+PID Filho: 29529 - PROCESSO: 2
+PID Filho: 29528 - PROCESSO: 1
+
+Matriz Resultado (C):
+2 2 2 
+2 2 2 
+2 2 2 
