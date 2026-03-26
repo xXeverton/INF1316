@@ -82,7 +82,7 @@ Faça um programa paralelo (com pelo menos 4 processos) para localizar uma
 chave em um vetor.
 - Crie uma memória compartilhada com dados numéricos inteiros e desordenados 
 e a divida pelo número de processos
-- Cada processo deve procurar o dado na sua área de memória e informar a posição [
+- Cada processo deve procurar o dado na sua área de memória e informar a posição
 onde o dado foi localizado.
 
 RESPOSTA:
@@ -111,3 +111,40 @@ Buscando chave: 7
 Processo 69048 encontrou na posicao 4
 Processo 69050 encontrou na posicao 12
 Processo 69051 encontrou na posicao 15
+
+4) Multiplicação multi-processo
+Faça um programa que:
+lTenha um processo pai que abre dois blocos de memória 
+compartilhada, m1 e m2.
+lcria dois processos filho (use exec), P1 e P2: estes 
+também fazem attach em m1 ou m2 respectivamente
+lCada um dá um sleep() randômico e escreve um valor int 
+na área compartilhada dele, e avisa o processo pai que um 
+novo valor foi gerado, escrevendo tb um nr de sequencia
+lO pai fica em loop verificando se houve um novo valor. 
+Apenas quando ambos P1 e P2 geraram um novo valor, o 
+pai imprime o produto dos valores gerados por P1 e P
+
+RESPOSTA:
+Criação da Memória e Filhos: O processo pai cria dois blocos de memória compartilhada (m1 e m2). 
+Depois, usa as funções fork e exec para criar dois processos filhos paralelos (P1 e P2), dando a 
+cada um o acesso à sua respectiva memória.
+
+O Truque da Sincronização: Como a memória compartilhada não avisa automaticamente quando um 
+dado novo chega, criamos uma variável de "sequência". Cada filho espera um tempo aleatório, 
+gera um número com rand(), grava na memória e soma +1 nessa sequência para avisar que terminou
+.
+Cálculo e Limpeza: O pai fica monitorando as memórias o tempo todo. Quando ele percebe que as
+duas sequências aumentaram (ou seja, ambos os filhos já gravaram os dados), ele lê os números,
+faz a multiplicação e imprime o resultado na tela. Ao final, ele apaga as memórias do sistema 
+para liberar os recursos.
+
+como rodar:
+gcc filho.c -o filho
+gcc pai.c -o pai
+./pai
+
+Saída:
+Filho 1 gerou o numero: 8
+Filho 0 gerou o numero: 7
+produto = 56
