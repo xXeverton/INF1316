@@ -1,0 +1,251 @@
+--------------------------------------------------------------------------------------
+
+[INF1316] LAB 03 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
+
+--------------------------------------------------------------------------------------
+
+1- Execute o programa “ctrl-c.c”. Digite Ctrl-C e Ctrl-\. Analise o resultado.
+Neste mesmo programa, remova os comandos signal( ) e repita o teste anterior
+observando os resultados.
+
+- RESPOSTA:
+
+Na primeira vez que se pressiona Ctrl-C, o processo não é finalizado, pois o 
+manipulador intHandler intercepta o sinal SIGINT e imprime uma mensagem na tela.
+Ao digitar Ctrl-\, o sinal SIGQUIT é enviado e o manipulador quitHandler é executado, 
+exibindo a mensagem "Terminando o processo..." e encerrando o programa.
+Sem os comandos signal(), o comportamento volta ao padrão do sistema: Ctrl-C encerra 
+o processo imediatamente e Ctrl-\ também encerra o processo, gerando a mensagem "Quit 
+(core dumped)".
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex1.c -o ex1
+
+- LINHA DE EXECUÇÃO:
+
+./ex1
+
+- SAÍDA:
+
+com o signal():
+
+Endereco do manipulador anterior (nil)
+Endereco do manipulador anterior (nil)
+Ctrl-C desabilitado. Use Ctrl-\ para terminar
+^CVocê pressionou Ctrl-C (2)
+^\Terminando o processo...
+
+sem o signal():
+
+ctrl-c:
+
+Endereco do manipulador anterior (nil)
+Endereco do manipulador anterior (nil)
+Ctrl-C desabilitado. Use Ctrl-\ para terminar
+^C
+
+ctrl-\:
+
+Endereco do manipulador anterior 0x60cdad5cb0a0
+Endereco do manipulador anterior 0x60cdad5cb0a0
+Ctrl-C desabilitado. Use Ctrl-\ para terminar
+^\Quit (core dumped)
+
+--------------------------------------------------------------------------------------
+
+2 - Tente fazer um programa para interceptar o sinal SIGKILL. Você conseguiu? Explique.
+
+- RESPOSTA:
+
+O exercício mostra que o sinal SIGKILL é especial e não pode ser interceptado, 
+ignorado ou tratado por um processo, ou seja, não conseguimos. Ao tentar instalar 
+um handler usando signal(SIGKILL, killHandler), a chamada retorna SIG_ERR, indicando 
+que o kernel não permite alteração do comportamento padrão desse sinal. 
+Portanto, o processo sempre será encerrado imediatamente ao receber SIGKILL, reforçando a 
+diferença entre sinais normais (como SIGINT) e sinais não mascaráveis (SIGKILL e SIGSTOP).
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex2.c -o ex2
+
+- LINHA DE EXECUÇÃO:
+
+./ex2
+
+- SAÍDA:
+
+Não foi possível interceptar o sinal SIGKILL.
+
+--------------------------------------------------------------------------------------
+
+3 - Execute e explique o funcionamento de filhocidio.c.
+
+- RESPOSTA:
+
+O exercício demonstra como um processo pai pode monitorar e controlar a execução de 
+um processo filho utilizando sinais. O pai cria um filho com fork() e define um tempo 
+limite para sua execução por meio da função sleep(). O filho executa outro programa 
+usando execve(). Quando o filho termina sua execução, seja normalmente ou após receber um sinal, 
+o sistema envia SIGCHLD ao pai, acionando o handler childhandler, que utiliza wait() 
+para capturar o término do filho e seu estado. Se o filho ultrapassar o tempo limite definido, 
+o pai envia o sinal SIGKILL para forçar o encerramento do processo. Caso o filho termine antes 
+do tempo limite, o SIGCHLD interrompe o sleep() do pai e o handler é executado imediatamente.
+Esse exercício demonstra o uso de fork(), execve(), sinais (SIGCHLD e SIGKILL) e wait() 
+para sincronização e controle de processos em sistemas Unix.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex3.c -o ex3
+gcc -Wall filho1.c -o filho1
+gcc -Wall filho2.c -o filho2
+
+- LINHA DE EXECUÇÃO:
+
+./ex3 10 ./filho1
+./ex3 10 ./filho2
+
+- SAÍDA:
+
+./ex3 10 ./filho1
+
+indo dormir...
+Acordei!
+Child 28996 terminated normally within 10 seconds com estado 0.
+
+./ex3 10 ./filho2
+
+indo dormir...
+Program ./filho2 exceeded limit of 10 seconds!
+Child 29199 was killed by signal 9.
+
+--------------------------------------------------------------------------------------
+
+4 - Usando SIGSTOP e SIGCONT faça um programa que crie 2 processos filho e alterne a
+execução dos filhos. Após 10 trocas de contexto, o processo pai mata os processos
+filho. OBS: Os processos filho são formados por loops infinitos.
+
+- RESPOSTA:
+
+Esse exercício mostra como um processo pai pode controlar a execução alternada de dois 
+filhos usando sinais. Cada filho é criado com fork() e entra em um loop infinito, 
+mas apenas um executa por vez, já que o pai utiliza SIGSTOP e SIGCONT para pausar e 
+retomar a execução de cada processo. A cada troca, o pai decide qual filho continua rodando, 
+garantindo que nunca estejam ativos ao mesmo tempo. Depois de um número pré-definido de 
+trocas de contexto, o pai envia SIGKILL para encerrar os filhos, demonstrando como sinais 
+podem ser usados não apenas para comunicação, mas também para impor limites de execução. Esse 
+exercício evidencia o papel central dos sinais e do wait() na coordenação entre processos e 
+no controle que o pai pode exercer sobre recursos do sistema.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex4.c -o ex4
+
+- LINHA DE EXECUÇÃO:
+
+./ex4
+
+- SAÍDA:
+
+filho 1 (pid: 31072) iniciado
+pai (pid: 31071) criou filhos: 31072 e 31081
+filho 1 iniciado, filho 2 parado
+filho 1 (pid: 31072) executando
+filho 1 (pid: 31072) executando
+
+--- troca número 1 ---
+filho 2 (pid: 31081) iniciado
+para filho 1 e continua filho 2
+
+--- troca número 2 ---
+filho 1 (pid: 31072) executando
+para filho 2 e continua filho 1
+filho 1 (pid: 31072) executando
+
+--- troca número 3 ---
+para filho 1 e continua filho 2
+filho 2 (pid: 31081) executando
+filho 2 (pid: 31081) executando
+
+--- troca número 4 ---
+para filho 2 e continua filho 1
+filho 1 (pid: 31072) executando
+filho 1 (pid: 31072) executando
+
+--- troca número 5 ---
+para filho 1 e continua filho 2
+filho 2 (pid: 31081) executando
+filho 2 (pid: 31081) executando
+
+--- troca número 6 ---
+para filho 2 e continua filho 1
+filho 1 (pid: 31072) executando
+filho 1 (pid: 31072) executando
+
+--- troca número 7 ---
+para filho 1 e continua filho 2
+filho 2 (pid: 31081) executando
+filho 2 (pid: 31081) executando
+
+--- troca número 8 ---
+filho 2 (pid: 31081) executando
+para filho 2 e continua filho 1
+filho 1 (pid: 31072) executando
+filho 1 (pid: 31072) executando
+
+--- troca número 9 ---
+para filho 1 e continua filho 2
+filho 2 (pid: 31081) executando
+filho 2 (pid: 31081) executando
+
+--- troca número 10 ---
+para filho 2 e continua filho 1
+filho 1 (pid: 31072) executando
+filho 1 (pid: 31072) executando
+
+fim depois de 10 trocas...
+
+--------------------------------------------------------------------------------------
+
+5 - Faça um programa que leia 2 números e imprima o resultado das 4 operações básicas
+sobre estes 2 números.
+- Verifique o que acontece se o 2º. número da entrada for 0 (zero).
+- Capture o sinal de erro de floating point (SIGFPE) e repita a experiência anterior.
+
+- RESPOTA:
+
+O programa lê dois números inteiros e realiza as quatro operações básicas: soma, subtração, 
+multiplicação e divisão. Quando o segundo número é diferente de zero, todas as operações 
+são executadas normalmente. Porém, se o segundo número for zero, a operação de divisão (a / b) 
+gera um erro de execução, pois divisão por zero não é permitida. Para tratar esse problema, 
+o programa utiliza o sinal SIGFPE (Floating Point Exception). Ao associar esse sinal a uma 
+função handler (signal(SIGFPE, fpe_handler)), o programa consegue capturar o erro no momento 
+em que ele ocorre. Assim, em vez de encerrar abruptamente, o programa executa o handler, exibe 
+ma mensagem de erro informando a divisão por zero e finaliza de forma controlada. 
+Esse exercício demonstra o uso de sinais para tratar exceções em tempo de execução,
+evitando falhas inesperadas no programa.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex5.c -o ex5
+
+- LINHA DE EXECUÇÃO:
+
+./ex5
+
+- SAÍDA:
+
+Digite dois números: 2 6
+Soma: 8
+Subtração: -4
+Multiplicação: 12
+Divisão: 0
+
+Segundo número igual a 0:
+
+Digite dois números: 2 0
+Soma: 2
+Subtração: 2
+Multiplicação: 0
+
+Erro: divisão por zero detectada!
