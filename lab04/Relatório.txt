@@ -1,0 +1,119 @@
+--------------------------------------------------------------------------------------
+
+[INF1316] LAB 04 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
+
+--------------------------------------------------------------------------------------
+
+1- Faça um programa para criar dois processos que se comunicam via pipe. O Pai lê do pipe 
+enquanto o filho escreve no pipe. Exiba o resultado do que foi escrito e lido.
+
+- RESPOSTA:
+
+O exercício demonstra a forma básica de Comunicação entre Processos (IPC) usando um pipe. 
+O programa cria um canal com dois descritores: fd[0] para leitura e fd[1] para escrita. Através 
+do fork(), o filho herda esses descritores. Para garantir uma comunicação unidirecional limpa, 
+o filho fecha a extremidade de leitura e o pai fecha a de escrita. O filho então envia uma 
+string pelo pipe e o pai a recebe, demonstrando a transferência de um stream de dados que não 
+persiste após o fechamento do pipe. O uso de wait() no pai assegura a sincronização correta 
+ao término da execução.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex1.c -o ex1
+
+- LINHA DE EXECUÇÃO:
+
+./ex1
+
+- SAÍDA:
+
+Filho escreveu: Mensagem enviada pelo filho
+Pai leu: Mensagem enviada pelo filho
+
+--------------------------------------------------------------------------------------
+
+2 - Faça um programa para redirecionar a entrada e a saída, lendo os dados de um arquivo e 
+gerando a saída em outro.
+
+- RESPOSTA:
+
+Este exercício utiliza as chamadas de sistema open() e dup2() para manipular a tabela de 
+descritores de arquivos do processo. Ao abrir um arquivo de entrada e usar dup2(fdEntrada, 0), 
+o descritor padrão stdin (0) passa a apontar para o arquivo. O mesmo é feito com o stdout (1) 
+para o arquivo de saída. Dessa forma, qualquer operação de leitura (read) ou escrita (write) 
+feita nos descritores padrão é automaticamente desviada para os arquivos físicos, permitindo 
+o processamento de dados sem intervenção direta do usuário via teclado/monitor.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex2.c -o ex2
+
+- LINHA DE EXECUÇÃO:
+
+./ex2
+
+- SAÍDA:
+
+Redirecionando entrada.txt -> saida.txt...
+Concluído.
+
+--------------------------------------------------------------------------------------
+
+3 - Faça um programa para criar um pipe e executar dois processos que são utilitários 
+do Unix que se comuniquem através do pipe criado, assim como a shell faz (Exemplo: ps | wc).
+
+- RESPOSTA:
+
+O programa simula o comportamento do operador pipe (|) da shell. São criados dois processos 
+filhos interconectados: a saída padrão do primeiro filho (que executa ps aux) é redirecionada 
+para o descritor de escrita do pipe (fd[1]), e a entrada padrão do segundo filho (que executa wc -l) 
+é redirecionada para o descritor de leitura (fd[0]). O uso de execlp() substitui a imagem dos 
+processos pelos utilitários do sistema, que herdam os descritores redirecionados. O processo 
+pai fecha ambos os lados do pipe para permitir que o sinal de fim de arquivo (EOF) seja propagado 
+corretamente entre os utilitários.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex3.c -o ex3
+
+- LINHA DE EXECUÇÃO:
+
+./ex3
+
+- SAÍDA:
+
+28
+
+--------------------------------------------------------------------------------------
+
+4 - Faça um programa que cria dois processos leitores e um processo escritor em uma mesma pipe. 
+Faça o escritor dormir metade do tempo dos leitores, e mostre como os leitores consomem os dados 
+produzidos pelo escritor.
+
+- RESPOSTA:
+
+Este exercício explora a característica concorrente dos pipes. Como um dado lido do pipe é removido 
+e não pode ser lido por outro processo, os dois processos leitores competem pelos dados enviados 
+pelo único escritor. O escritor envia mensagens a cada 1 segundo (sleep(1)), enquanto os leitores 
+tentam ler a cada 2 segundos (sleep(2)). O resultado visualizado na saída demonstra uma alternância 
+ou distribuição de carga entre os leitores: como o escritor produz mais rápido do que um único 
+leitor consegue processar, ambos os leitores acabam trabalhando em paralelo para consumir o 
+stream de dados disponível.
+
+- LINHA DE COMPILAÇÃO:
+
+gcc -Wall ex4.c -o ex4
+
+- LINHA DE EXECUÇÃO:
+
+./ex4
+
+- SAÍDA:
+
+[Escritor] enviou: Mensagem 1
+[Escritor] enviou: Mensagem 2
+[Leitor 1] recebeu: Mensagem 1
+[Leitor 1] recebeu: Mensagem 2
+[Escritor] enviou: Mensagem 3
+[Leitor 2] recebeu: Mensagem 3
+...
