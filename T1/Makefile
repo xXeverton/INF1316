@@ -1,26 +1,20 @@
-# Define qual compilador usar
+# Define qual compilador usar e as flags
 CC = gcc
-
-# Define as flags do compilador (avisos e modo de depuração)
 CFLAGS = -Wall -g
 
-# Define as pastas do projeto
-SRC_DIR = src
-BIN_DIR = bin
-
-# Define o nome do executável final
-EXEC = $(BIN_DIR)/simulador
-
-# Arquivos fonte
-SRC = $(SRC_DIR)/main.c $(SRC_DIR)/kernel.c $(SRC_DIR)/controller.c $(SRC_DIR)/app.c
-
 # Regra principal: o que acontece quando você digita "make"
-all: $(EXEC)
+# Queremos que ele construa TANTO o simulador QUANTO a app
+all: bin/simulador bin/app
 
-# Como construir o executável
-$(EXEC): $(SRC)
-	$(CC) $(CFLAGS) $(SRC) -o $(EXEC)
+# Regra para construir o Simulador (Kernel + Controller)
+# Por enquanto, tudo isso está dentro do main.c
+bin/simulador: src/main.c
+	$(CC) $(CFLAGS) src/main.c -o bin/simulador
 
-# Regra para limpar os arquivos compilados (digite "make clean")
+# Regra para construir a Aplicação Trabalhadora
+bin/app: src/app.c
+	$(CC) $(CFLAGS) src/app.c -o bin/app
+
+# Regra para limpar tudo
 clean:
-	rm -f $(EXEC)
+	rm -f bin/simulador bin/app
