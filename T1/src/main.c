@@ -149,7 +149,7 @@ void run_kernel(int read_fd, int write_fd) {
                         if (estado_processos[processo_atual] == 0) {
                             estado_processos[processo_atual] = 1;
                             kill(processos[processo_atual], SIGCONT);
-                            printf("--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\\n", nomes[processo_atual]);
+                            printf("--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n", nomes[processo_atual]);
                             break;
                         }
                     }
@@ -192,7 +192,6 @@ void run_kernel(int read_fd, int write_fd) {
                 }
             }
 
-            // (Mais tarde implementaremos o IRQ1 e IRQ2 aqui)
         }
     }
 }
