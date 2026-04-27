@@ -15,12 +15,15 @@ int pc_processos[5] = {0, 0, 0, 0, 0}; // Guarda o PC atual
 int mem_processos[5] = {0, 0, 0, 0, 0}; // Guarda a Memória atual
 int io_counts[5] = {0, 0, 0, 0, 0};     // Conta acessos de I/O
 
-
+void handle_sigtstp(int sig);
 
 // ---------------------------------------------------------
 // Função do Fofoqueiro: InterController Sim
 // ---------------------------------------------------------
 void run_controller(int write_fd) {
+    // O Controlador ignora o Ctrl+Z para não duplicar o relatório
+    signal(SIGTSTP, SIG_IGN);
+
     srand(time(NULL)); // Inicializa a semente para os números aleatórios
     char msg[50];
 
@@ -45,11 +48,28 @@ void run_controller(int write_fd) {
     }
 }
 
+
+// Função que lê o Pipe byte a byte até achar o fim da string (\0)
+int ler_mensagem_pipe(int fd, char *buffer) {
+    int i = 0;
+    char c;
+    // Lê 1 único caractere por vez
+    while (read(fd, &c, 1) > 0) {
+        buffer[i++] = c;
+        if (c == '\0') {
+            return i; // Mensagem completa encontrada e separada!
+        }
+    }
+    return 0; // Pipe vazio ou fechado
+}
+
 // ---------------------------------------------------------
 // Função do Chefe: KernelSim
 // ---------------------------------------------------------
 void run_kernel(int read_fd, int write_fd) {
-    
+    // O KernelSim é o único autorizado a mostrar o relatório
+    signal(SIGTSTP, handle_sigtstp);
+
     char buffer[50];
     printf("KernelSim iniciado e a aguardar interrupções...\n");
     
@@ -104,7 +124,7 @@ void run_kernel(int read_fd, int write_fd) {
 
     while(1) {
         // Lê do pipe bloqueando até chegar uma nova mensagem
-        if (read(read_fd, buffer, sizeof(buffer)) > 0) {
+        if (ler_mensagem_pipe(read_fd, buffer) > 0) {
             
             // Se for um alarme de tempo (IRQ0), fazemos a troca de contexto!
             if (strcmp(buffer, "IRQ0") == 0) {
@@ -149,6 +169,8 @@ void run_kernel(int read_fd, int write_fd) {
 
                 // 1. Descobrir quem mandou a SYSCALL (olhando A1, A2, ...)
                 int id_bloqueado = buffer[9] - '1'; // Converte char '1' para int 0
+
+                io_counts[id_bloqueado]++;
 
                 // 2. pausa o processo imediatamente
                 kill(processos[id_bloqueado], SIGSTOP);
@@ -254,10 +276,6 @@ void handle_sigtstp(int sig) {
 // Ponto de Partida
 // ---------------------------------------------------------
 int main() {
-
-    // Para ficar escutando o sinal do teclado
-    signal(SIGTSTP, handle_sigtstp);
-    
     int fd[2]; // fd[0] é a boca de leitura, fd[1] é a boca de escrita
     pid_t pid_controller;
 
