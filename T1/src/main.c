@@ -6,6 +6,17 @@
 #include <string.h>
 #include <signal.h>
 
+// -- Variáveis Globais para o Relatório ---
+pid_t processos[5];
+char* nomes[] = {"A1", "A2", "A3", "A4", "A5"};
+int estado_processos[5] = {0, 0, 0, 0, 0};
+
+int pc_processos[5] = {0, 0, 0, 0, 0}; // Guarda o PC atual
+int mem_processos[5] = {0, 0, 0, 0, 0}; // Guarda a Memória atual
+int io_counts[5] = {0, 0, 0, 0, 0};     // Conta acessos de I/O
+
+
+
 // ---------------------------------------------------------
 // Função do Fofoqueiro: InterController Sim
 // ---------------------------------------------------------
@@ -38,11 +49,12 @@ void run_controller(int write_fd) {
 // Função do Chefe: KernelSim
 // ---------------------------------------------------------
 void run_kernel(int read_fd, int write_fd) {
+    
     char buffer[50];
     printf("KernelSim iniciado e a aguardar interrupções...\n");
     
-    pid_t processos[5];
-    char* nomes[] = {"A1", "A2", "A3", "A4", "A5"};
+    // pid_t processos[5];
+    // char* nomes[] = {"A1", "A2", "A3", "A4", "A5"};
     
     char fd_str[10];
     sprintf(fd_str, "%d", write_fd);
@@ -76,7 +88,7 @@ void run_kernel(int read_fd, int write_fd) {
 
     
     // Estado possíveis para simplificar: 0 = PRONTO, 1 = EXECUTANDO, 2 = BLOQUEADO
-    int estado_processos[5] = {0, 0, 0, 0, 0};
+    // int estado_processos[5] = {0, 0, 0, 0, 0};
     
     // Filas para D1 e D2
     int fila_d1[5];
@@ -116,7 +128,20 @@ void run_kernel(int read_fd, int write_fd) {
                     }
                 }
             }
-
+            
+            // Ler os dados globais e salvar o UPDATE
+            else if (strncmp(buffer, "UPDATE", 6) == 0) {
+                // Buffer é "UPDATE A1 15 8"
+                int id = buffer[8] - '1'; // Descobre quem é (0 a 4)
+                
+                // Extrai os números usando sscanf
+                int lido_pc, lido_mem;
+                sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
+                
+                // Salva nas variáveis globais
+                pc_processos[id] = lido_pc;
+                mem_processos[id] = lido_mem;
+            }
              
             else if (strncmp(buffer, "SYSCALL", 7) == 0) {
                 // A mensagem é do tipo: "SYSCALL A1 D1 R"
@@ -196,10 +221,43 @@ void run_kernel(int read_fd, int write_fd) {
     }
 }
 
+
+void handle_sigtstp(int sig) {
+    printf("\n\n=======================================================\n");
+    printf("     SIMULAÇÃO PAUSADA (Ctrl+Z) - STATUS DO SISTEMA    \n");
+    printf("=======================================================\n");
+    
+    for (int i = 0; i < 5; i++) {
+        printf("Processo [%s]:\n", nomes[i]);
+        printf("  - PC Atual      : %d\n", pc_processos[i]);
+        printf("  - Memoria       : m%02d\n", mem_processos[i]);
+        printf("  - Acessos a I/O : %d vezes\n", io_counts[i]);
+        
+        printf("  - Estado        : ");
+        if (estado_processos[i] == 0) printf("PRONTO\n");
+        else if (estado_processos[i] == 1) printf("EXECUTANDO (CPU)\n");
+        else if (estado_processos[i] == 2) printf("BLOQUEADO (Em fila de dispositivo)\n");
+        
+        printf("-------------------------------------------------------\n");
+    }
+    
+    printf("\nPressione [ENTER] para retomar a simulação...\n");
+    
+    // Pausa a execução do Kernel até o usuário apertar Enter
+    getchar(); 
+    
+    printf("Retomando simulação...\n");
+    printf("=======================================================\n\n");
+}
+
 // ---------------------------------------------------------
 // Ponto de Partida
 // ---------------------------------------------------------
 int main() {
+
+    // Para ficar escutando o sinal do teclado
+    signal(SIGTSTP, handle_sigtstp);
+    
     int fd[2]; // fd[0] é a boca de leitura, fd[1] é a boca de escrita
     pid_t pid_controller;
 
