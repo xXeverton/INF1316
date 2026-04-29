@@ -4,39 +4,56 @@
 #include <string.h>
 #include <time.h>
 #include <signal.h>
-#include "common.h" // Importa as globais e assinaturas
+#include "common.h"
 
+/*
+ * INTERCONTROLLER SIM - Simulador de Controlador de Interrupções
+ * 
+ * Este processo emula o hardware responsavel por gerar interrupções:
+ * 
+ * IRQ0 (TimeSlice): Gerado periodicamente a cada 500ms
+ *       Informa ao Kernel que a fatia de tempo de um processo terminou,
+ *       forçando uma troca de contexto (preemption).
+ * 
+ * IRQ1 (Dispositivo D1): 10% de probablidade a cada 500ms
+ *       Indica que uma operação de E/S no dispositivo D1 terminou.
+ *       Como D1 é rápido, tem maior probabilidade que D2.
+ * 
+ * IRQ2 (Dispositivo D2): 5% de probabilidade a cada 500ms
+ *       Indica que uma operação de E/S no dispositivo D2 terminou.
+ *       D2 é 20x mais lento que D1.
+ */
 
-// ---------------------------------------------------------
-// Função do Fofoqueiro: InterController Sim
-// ---------------------------------------------------------
 void run_controller(int write_fd)
 {
-    // O Controlador ignora o Ctrl+Z para não duplicar o relatório
+    // Ignora Ctrl+Z para evitar duplicar relatórios
     signal(SIGTSTP, SIG_IGN);
 
-    srand(time(NULL)); // Inicializa a semente para os números aleatórios
+    srand(time(NULL));
     char msg[50];
 
     while (1)
     {
-        // Gera o TimeSlice (IRQ0) a cada 500ms (500.000 microssegundos)
+        // Aguarda 500ms antes de gerar novas interrupções
         usleep(500000);
+        
+        // IRQ0: TimeSlice
+        // Sempre gerado, sincroniza o escalonamento
         strcpy(msg, "IRQ0");
         write(write_fd, msg, strlen(msg) + 1);
 
-        // Sorteia interrupções de I/O (D1 e D2)
-        int probabilidade = rand() % 100; // Gera um número de 0 a 99
+        // Sorteia interrupções de E/S de forma aleatória
+        int probabilidade = rand() % 100;
 
+        // IRQ1: 10% de probabilidade (D1 é rápido)
         if (probabilidade < 10)
         {
-            // 10% de probabilidade (P1 = 0.1)
             strcpy(msg, "IRQ1");
             write(write_fd, msg, strlen(msg) + 1);
         }
-        else if (probabilidade >= 10 && probabilidade < 15)
+        // IRQ2: 5% de probabilidade (D2 é lento)
+        else if (probabilidade < 15)
         {
-            // 5% de probabilidade (P2 = 0.05) -> do 10 ao 14 são 5 números
             strcpy(msg, "IRQ2");
             write(write_fd, msg, strlen(msg) + 1);
         }

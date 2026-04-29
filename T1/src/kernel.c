@@ -6,8 +6,26 @@
 #include <signal.h>
 #include "common.h"
 
+/*
+ * KERNELSIM - Simulador de Kernel Preemptivo
+ * 
+ * Gerencia 5 processos de aplicação usando escalonamento Round-Robin com preemption.
+ * Responde a três tipos de interrupções:
+ * - IRQ0: TimeSlice (força troca de contexto)
+ * - IRQ1: Hardware D1 completa uma operação (desbloqueia processos)
+ * - IRQ2: Hardware D2 completa uma operação (desbloqueia processos)
+ * 
+ * Estados dos processos:
+ * 0 = PRONTO (aguardando CPU)
+ * 1 = EXECUTANDO (em posse da CPU)
+ * 2 = BLOQUEADO (aguardando E/S)
+ * 3 = TERMINADO (finalizou seus MAX ciclos)
+ */
 
-// Função que lê o Pipe byte a byte até achar o fim da string (\0)
+/*
+ * Lê uma mensagem completa do pipe terminada em \0
+ * As mensagens vêm do InterController (interrupções) ou dos processos (UPDATE/SYSCALL)
+ */
 int ler_mensagem_pipe(int fd, char *buffer)
 {
     int i = 0;
@@ -24,23 +42,19 @@ int ler_mensagem_pipe(int fd, char *buffer)
     return 0; // Pipe vazio ou fechado
 }
 
-// ---------------------------------------------------------
-// Função do Chefe: KernelSim
-// ---------------------------------------------------------
+// ----- INICIALIZAÇÃO DO KERNELSIM E CRIAÇÃO DOS PROCESSOS -----
+
 void run_kernel(int read_fd, int write_fd)
 {
-    // O KernelSim é o único autorizado a mostrar o relatório
     signal(SIGTSTP, handle_sigtstp);
 
     char buffer[50];
     printf("KernelSim iniciado e a aguardar interrupções...\n");
 
-    // pid_t processos[5];
-    // char* nomes[] = {"A1", "A2", "A3", "A4", "A5"};
-
     char fd_str[10];
     sprintf(fd_str, "%d", write_fd);
 
+    // Cria os 5 processos de aplicação
     for (int i = 0; i < 5; i++)
     {
         pid_t pid = fork();
@@ -53,101 +67,89 @@ void run_kernel(int read_fd, int write_fd)
 
         if (pid == 0)
         {
+            // Filho executa o programa da aplicação
             execl("./bin/app", "./bin/app", nomes[i], fd_str, NULL);
-
             perror("Falha no execl\n");
             exit(1);
         }
         else
         {
-            // Código do Pai
+            // Pai armazena o PID e pausa imediatamente
             processos[i] = pid;
-
-            // Dá um pequeno tempo para garantir que o filho fez o exec antes de pausar
             usleep(10000);
             kill(pid, SIGSTOP);
             printf("Kernel: Processo %s (PID %d) criado e pausado\n", nomes[i], pid);
         }
     }
 
-    // Estado possíveis para simplificar: 0 = PRONTO, 1 = EXECUTANDO, 2 = BLOQUEADO
-    // int estado_processos[5] = {0, 0, 0, 0, 0};
+    // Filas para processos bloqueados aguardando I/O
+    int fila_d1[5], tamanho_d1 = 0;
+    int fila_d2[5], tamanho_d2 = 0;
 
-    // Filas para D1 e D2
-    int fila_d1[5];
-    int tamanho_d1 = 0;
-
-    int fila_d2[5];
-    int tamanho_d2 = 0;
-
-    // Escalonador Round-Robin
+    // Escalonador Round-Robin: começa pelo primeiro processo
     int processo_atual = 0;
-    kill(processos[processo_atual], SIGCONT); // Acorda o primeiro processo para o a simulação começar!
+    kill(processos[processo_atual], SIGCONT);
+    estado_processos[processo_atual] = 1;
     printf("Kernel: Iniciando a execução com %s (PID %d)\n", nomes[processo_atual], processos[processo_atual]);
+
+    // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
 
     while (1)
     {
         int status;
+        
+        // Verifica se algum processo finalizou sua execução
         for (int i = 0; i < 5; i++)
         {
-            // Se o processo ainda não estiver marcado como terminado (3)
             if (estado_processos[i] != 3)
             {
-                // WNOHANG verifica sem bloquear. Retorna o PID se morreu, 0 se tá vivo.
                 if (waitpid(processos[i], &status, WNOHANG) > 0)
                 {
-                    estado_processos[i] = 3; // Marca como TERMINADO!
+                    estado_processos[i] = 3;
                     printf("\n>>> Kernel: Processo %s finalizou sua execucao! <<<\n\n", nomes[i]);
                 }
 
-                // VERIFICAÇÃO DE FIM DE SISTEMA
+                // Verifica se todos os processos terminaram
                 int processos_terminados = 0;
                 for (int i = 0; i < 5; i++)
                 {
                     if (estado_processos[i] == 3)
-                    {
                         processos_terminados++;
-                    }
                 }
 
-                // Se os 5 terminaram, quebramos o loop infinito!
+                // Se todos terminaram, encerra o simulador
                 if (processos_terminados == 5)
                 {
                     printf("\n=======================================================\n");
                     printf(">>> TODOS OS PROCESSOS APLICAÇÃO TERMINARAM <<<\n");
                     printf(">>> INICIANDO DESLIGAMENTO DO KERNEL...     <<<\n");
                     printf("=======================================================\n");
-                    
-                    kill(0, SIGKILL); // Mata TODO MUNDO (inclusive a si mesmo)
+                    kill(0, SIGKILL);
                 }
             }
         }
 
-        // Lê do pipe bloqueando até chegar uma nova mensagem
+        // Aguarda uma mensagem do pipe
         if (ler_mensagem_pipe(read_fd, buffer) > 0)
         {
 
-            // Se for um alarme de tempo (IRQ0), fazemos a troca de contexto!
+            // IRQ0: TimeSlice terminou - força troca de contexto (preemption)
             if (strcmp(buffer, "IRQ0") == 0)
             {
-
-                // 1. Pausa o que está rodando agora:
-                // Só pausa o processo atual se ele estava EXECUTANDO (1)
-                // Se ele já estava bloqueado (2) não fazemos nada com ele
+                // Pausa o processo atual se estiver executando
                 if (estado_processos[processo_atual] == 1)
                 {
                     kill(processos[processo_atual], SIGSTOP);
-                    estado_processos[processo_atual] = 0; // volta para pronto
+                    estado_processos[processo_atual] = 0;
                 }
 
-                // 2. Vai para o próximo processo PRONTO na fila circular
+                // Encontra o próximo processo PRONTO (em round-robin)
                 for (int j = 0; j < 5; j++)
                 {
                     processo_atual = (processo_atual + 1) % 5;
                     if (estado_processos[processo_atual] == 0)
                     {
                         estado_processos[processo_atual] = 1;
-                        // 3. Acorda o novo processo
                         kill(processos[processo_atual], SIGCONT);
                         printf("--- Troca de Contexto por IRQ0: Agora rodando %s ---\n", nomes[processo_atual]);
                         break;
@@ -155,59 +157,53 @@ void run_kernel(int read_fd, int write_fd)
                 }
             }
 
-            // Ler os dados globais e salvar o UPDATE
+            // UPDATE: Recebe informação de estado de um processo (PC e memória)
             else if (strncmp(buffer, "UPDATE", 6) == 0)
             {
-                // Buffer é "UPDATE A1 15 8"
-                int id = buffer[8] - '1'; // Descobre quem é (0 a 4)
-
-                // Extrai os números usando sscanf
+                int id = buffer[8] - '1';
                 int lido_pc, lido_mem;
                 sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
 
-                // Salva nas variáveis globais
                 pc_processos[id] = lido_pc;
                 mem_processos[id] = lido_mem;
             }
 
+            // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado
             else if (strncmp(buffer, "SYSCALL", 7) == 0)
             {
-                // A mensagem é do tipo: "SYSCALL A1 D1 R"
+                // Formato: "SYSCALL A1 D1 R"
                 printf("Kernel recebeu: %s \n", buffer);
 
-                // 1. Descobrir quem mandou a SYSCALL (olhando A1, A2, ...)
-                int id_bloqueado = buffer[9] - '1'; // Converte char '1' para int 0
+                int id_bloqueado = buffer[9] - '1';
+                disp_bloqueado[id_bloqueado] = buffer[12];
+                oper_bloqueado[id_bloqueado] = buffer[14];
 
-                disp_bloqueado[id_bloqueado] = buffer[12]; // Pega o '1' ou '2' de "D1"
-                oper_bloqueado[id_bloqueado] = buffer[14]; // Pega o 'R', 'W' ou 'X'
-
+                // Conta os acessos a cada dispositivo (para o relatório)
                 if (buffer[12] == '1')
                     io_counts_d1[id_bloqueado]++;
                 else if (buffer[12] == '2')
                     io_counts_d2[id_bloqueado]++;
 
-                // 2. pausa o processo imediatamente
+                // Pausa o processo imediatamente
                 kill(processos[id_bloqueado], SIGSTOP);
-                estado_processos[id_bloqueado] = 2; // Marca como bloqueado
+                estado_processos[id_bloqueado] = 2;
 
-                // 3. Coloca na fila certa (olhando para D1 e D2)
+                // Coloca na fila de espera do dispositivo apropriado
                 if (buffer[12] == '1')
                 {
                     fila_d1[tamanho_d1++] = id_bloqueado;
                     printf("Kernel: Processo %s foi bloqueado e colocado na Fila D1.\n", nomes[id_bloqueado]);
                 }
-
                 else if (buffer[12] == '2')
                 {
                     fila_d2[tamanho_d2++] = id_bloqueado;
                     printf("Kernel: Processo %s foi bloqueado e colocado na Fila D2.\n", nomes[id_bloqueado]);
                 }
 
-                // 4. Se o cara pediu I/O era o processo atual rodando, temos que
-                // obrigatoriamente achar outro cara PRONTO para dar a CPU para ele
+                // Se o processo que pediu I/O era o que estava executando,
+                // precisa escolher outro para rodar na CPU
                 if (processo_atual == id_bloqueado)
                 {
-                    // Loop para encontrar o próximo cara pronto!
                     for (int j = 0; j < 5; j++)
                     {
                         processo_atual = (processo_atual + 1) % 5;
@@ -222,51 +218,48 @@ void run_kernel(int read_fd, int write_fd)
                 }
             }
 
+            // IRQ1: Dispositivo D1 completou uma operação de E/S
             else if (strcmp(buffer, "IRQ1") == 0)
             {
-                // printf("Kernel recebeu: IRQ1 (Sinal do Hardware D1)\n");
-
                 if (tamanho_d1 > 0)
                 {
-                    // Pega o primeiro da Fila (o mais antigo)
+                    // Desbloqueia o primeiro processo que está aguardando D1
                     int id_acordado = fila_d1[0];
-
-                    // Ele sai da geladeira e volta para a fila da CPU (Roudin-Robin)
                     estado_processos[id_acordado] = 0;
                     printf(">>> Kernel: Hardware D1 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    // FIFO: desloca todo mundo para a frente
+                    
+                    // Remove o processo da fila (FIFO)
                     for (int k = 0; k < tamanho_d1 - 1; k++)
                     {
                         fila_d1[k] = fila_d1[k + 1];
                     }
-
-                    tamanho_d1--; // A fila diminui
+                    tamanho_d1--;
                 }
             }
 
+            // IRQ2: Dispositivo D2 completou uma operação de E/S
             else if (strcmp(buffer, "IRQ2") == 0)
             {
-                // printf("Kernel recebeu: IRQ2 (Sinal do Hardware D2)\n");
                 if (tamanho_d2 > 0)
                 {
-                    // Pega o primeiro da Fila (o mais antigo)
+                    // Desbloqueia o primeiro processo que está aguardando D2
                     int id_acordado = fila_d2[0];
-
-                    // Ele sai da geladeira e volta para a fila da CPU (Roudin-Robin)
                     estado_processos[id_acordado] = 0;
                     printf(">>> Kernel: Hardware D2 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    // FIFO: desloca todo mundo para a frente
+                    
+                    // Remove o processo da fila (FIFO)
                     for (int k = 0; k < tamanho_d2 - 1; k++)
                     {
                         fila_d2[k] = fila_d2[k + 1];
                     }
-
-                    tamanho_d2--; // A fila diminui
+                    tamanho_d2--;
                 }
             }
         }
     }
 }
+
+// ----- RELATÓRIO DE ESTADO (EXIBIDO AO APERTAR CTRL+Z) -----
 
 void handle_sigtstp(int sig)
 {
@@ -296,8 +289,6 @@ void handle_sigtstp(int sig)
     }
 
     printf("\nPressione [ENTER] para retomar a simulação...\n");
-
-    // Pausa a execução do Kernel até o usuário apertar Enter
     getchar();
 
     printf("Retomando simulação...\n");
