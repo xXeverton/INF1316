@@ -1,0 +1,32 @@
+Gerenciamento de Memória
+
+Lista Básica:
+
+32. Qual é principal tarefa da Memory Management Unit (MMU)?
+
+
+33. Qual é a vantagem em se distinguir endereços virtuais de endereços
+lógicos? Com resposta.
+
+
+34. Explique as etapas que compõem um page fault.
+35. Qual é o principal benefício de usar um TLB, e a influência de seu
+tamanho.
+36. É possível que ocorra um page-fault para um endereço de um processo
+P1, mesmo que na conversão do endereço lógico para o físico tenha
+havido um TLB-hit? Justifique. Com resposta.
+37. Seja uma arquitetura de 32 bits. Sabendo-se que os 15 bits mais
+significativos são usados como índice para a entrada na tabela de
+páginas, e que a memoria do seu computador possui 10 MBs livres para
+os processos. Quantos quadros de página ela comporta para os
+processos? Com resposta.
+38. Dada uma memória física com 4 quadros de página (frames) e a seguinte
+sequência de acessos a indices de páginas. Então simule os algoritmos
+LRU, FIFO,e Otimo e conte o número total de Page-faults (PF) que cada
+algoritmo ocasiona:
+1,2,3,4,2,1,5,6,2,1,2,3,7,6,3,2,1,2,3,6
+Com resposta.
+39.Indique pelo menos 3 dados/informações que estão invariavelmente estão
+presentes em todas as entradas da tabela de páginas.
+40.que é gerenciamento de memória através de overlay? Dê um exemplo de
+um programa que poderia ter overlays.
