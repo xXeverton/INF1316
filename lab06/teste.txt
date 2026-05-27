@@ -1,0 +1,1 @@
+Ola! Este eh um arquivo de texto criado apenas para testar o mmap.

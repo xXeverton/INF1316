@@ -1,0 +1,148 @@
+\\ [INF1316] LAB 06- Everton Pereira Militão 2320462, Lúcio Campos 2320955
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 1 - Alocação Dinâmica com sbrk() e brk()
+
+- ENUNCIADO: -----------------------------------------------------------------------------------------
+Faça um programa que usa myallocate para alocar e desalocar memória dinamicamente.
+
+- O QUE FOI FEITO: -----------------------------------------------------------------------------------
+Foi desenvolvido um programa em C que gerencia o espaço de endereçamento do heap manualmente, 
+simulando um Pool de Memória simplificado  
+A implementação foi dividida em três etapas baseadas nas chamadas de sistema do Linux:
+1. initmemorypool(): Salva o endereço base atual do heap usando sbrk(0)
+2. myallocate(n): Aloca "n" bytes de memória deslocando o break pointer com sbrk(n) 
+3. resetmemorypool(): Desaloca todo o bloco de uma vez, trazendo o break pointer de volta ao 
+   endereço base inicial usando brk(memorypool) 
+
+Durante os testes iniciais, o programa apresentou "Segmentation fault" 
+após a limpeza do pool. Isso ocorreu porque a função printf() aloca buffers internos no heap via 
+malloc() por baixo dos panos, gerando conflito com o nosso reposicionamento manual do break pointer. 
+O problema foi solucionado utilizando a função setvbuf(stdout, NULL, _IONBF, 0) no início do programa, 
+desativando completamente o buffer da saída padrão e garantindo uma execução estável.
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+gcc ex1.c -o ex1
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+./ex1
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 2 - Mapeamento de Arquivos em Memória (mmap)
+
+- ENUNCIADO: -----------------------------------------------------------------------------------------
+Execute map-exemplo.c passando o nome de um arquivo como parâmetro. Qual foi a novidade?
+
+- O QUE FOI FEITO: -----------------------------------------------------------------------------------
+O código map-exemplo.c  foi compilado e executado passando um arquivo de texto como 
+parâmetro. O programa abriu o arquivo e utilizou a chamada de sistema mmap() para mapeá-lo diretamente 
+para o espaço de endereçamento do processo. Após o mapeamento, o arquivo inteiro foi 
+impresso no terminal através de um laço de repetição.
+
+A grande "novidade" observada é a forma como o conteúdo do arquivo é acessado. Em vez de utilizar as 
+funções convencionais de leitura de disco (como read() ou fread()), o arquivo mapeado passa a ser 
+tratado pelo programa simplesmente como um array de caracteres alocado na memória (acessado via 
+índices p[len]). O sistema operacional gerencia a paginação por trás dos panos, o que se 
+torna uma alternativa muito mais rápida e eficiente à tradicional E/S de disco, criando 
+uma correspondência direta (1-para-1) entre os endereços de memória e os dados do arquivo.
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+gcc ex2.c -o ex2
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+./ex2 teste.txt
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+QUESTÃO 3 - Verificando o tamanho da página e medindo desempenho do mmap() vs E/S
+
+- ENUNCIADO: -----------------------------------------------------------------------------------------
+Modifique map-exemplo.c para: 
+a) Verificar quantas páginas de memória o seu arquivo precisou. 
+b) Medir o quão mais rápido foi a escrita do arquivo mapeado quando comparado com a E/S em disco. 
+
+- O QUE FOI FEITO: -----------------------------------------------------------------------------------
+O código ex3.c foi desenvolvido para contemplar ambas as solicitações. Para a etapa (a), utilizamos 
+a função sysconf(_SC_PAGESIZE) para descobrir o tamanho da página do sistema. Dividindo o tamanho total 
+do arquivo pelo tamanho da página (arredondando para cima), calculamos o número exato de páginas de 
+memória reservadas.
+
+Para a etapa (b), aplicamos a função gettimeofday() para aferir os tempos de execução. Primeiro, testamos 
+o tempo para ler e reescrever byte a byte todo o conteúdo na memória mapeada. Depois, comparamos 
+cronometrando a mesma operação com chamadas convencionais read() e write() em disco. Os resultados 
+validaram a teoria: a alternativa do mmap() (0.11s) é expressivamente mais rápida do que as operações 
+de E/S normais (61.9s) devido à redução severa no overhead de chamadas de sistema.
+
+- LINHA DE COMPILAÇÃO E EXECUÇÃO: --------------------------------------------------------------------
+gcc ex3.c -o ex3
+./ex3 teste.txt
+
+ESTATÍSTICAS DE MEMÓRIA
+Tamanho do arquivo:  67 bytes
+Tamanho da página:   4096 bytes
+Páginas alocadas:    1
+
+TESTE DE DESEMPENHO
+Tempo de execução com mmap():       0.000036 segundos
+Tempo de execução com E/S normal:   0.000173 segundos
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+[
+QUESTÃO 4 - Comunicação Interprocessos via mmap()
+
+- ENUNCIADO: -----------------------------------------------------------------------------------------
+Escreva dois programas prog1.c e prog2.c que trocam dados através de um mesmo arquivo mapeado para 
+memória (de cada um).
+
+- O QUE FOI FEITO: -----------------------------------------------------------------------------------
+Foram desenvolvidos dois códigos distintos em C (ex4_prog1.c e ex4_prog2.c) para ilustrar a comunicação 
+interprocessos utilizando memória compartilhada. O arquivo "ex4_prog1.c" cria um arquivo físico, define seu 
+tamanho e o mapeia na memória utilizando a flag MAP_SHARED, escrevendo uma mensagem inicial. 
+O "ex4_prog2.c" abre esse mesmo arquivo físico, realiza seu próprio mapeamento, consegue ler instantaneamente 
+a mensagem deixada pelo primeiro processo e insere sua própria resposta na sequência da memória. 
+QUESTÃO 4 - Comunicação Interprocessos via mmap()
+
+- ENUNCIADO: -----------------------------------------------------------------------------------------
+Escreva dois programas prog1.c e prog2.c que trocam dados através de um mesmo arquivo mapeado para 
+memória (de cada um).
+
+- O QUE FOI FEITO: -----------------------------------------------------------------------------------
+Foram desenvolvidos dois códigos distintos em C (ex4_prog1.c e ex4_prog2.c) para ilustrar a comunicação 
+interprocessos utilizando memória compartilhada. O arquivo "ex4_prog1.c" cria um arquivo físico, define seu 
+tamanho e o mapeia na memória utilizando a flag MAP_SHARED, escrevendo uma mensagem inicial. 
+O "ex4_prog2.c" abre esse mesmo arquivo físico, realiza seu próprio mapeamento, consegue ler instantaneamente 
+a mensagem deixada pelo primeiro processo e insere sua própria resposta na sequência da memória. 
+
+A prática demonstrou que o mmap() aliado ao MAP_SHARED atua como um poderoso e veloz mecanismo de 
+IPC (Inter-Process Communication).
+
+- LINHA DE COMPILAÇÃO E EXECUÇÃO: --------------------------------------------------------------------
+gcc ex4_prog1.c -o ex4_prog1
+gcc ex4_prog2.c -o ex4_prog2
+./ex4_prog1
+./ex4_prog2
+
+- SAÍDA OBTIDA: --------------------------------------------------------------------------------------
+Prog1: Mensagem 'Ola do Programa 1!' escrita na memoria.
+Prog2: Li a seguinte mensagem -> 'Ola do Programa 1!'
+Prog2: Resposta escrita na memoria.
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+A prática demonstrou que o mmap() aliado ao MAP_SHARED atua como um poderoso e veloz mecanismo de 
+IPC (Inter-Process Communication).
+
+- LINHA DE COMPILAÇÃO E EXECUÇÃO: --------------------------------------------------------------------
+gcc ex4_prog1.c -o ex4_prog1
+gcc ex4_prog2.c -o ex4_prog2
+./ex4_prog1
+./ex4_prog2
+
+- SAÍDA OBTIDA: --------------------------------------------------------------------------------------
+Prog1: Mensagem 'Ola do Programa 1!' escrita na memoria.
+Prog2: Li a seguinte mensagem -> 'Ola do Programa 1!'
+Prog2: Resposta escrita na memoria.
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+]
