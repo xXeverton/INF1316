@@ -157,15 +157,53 @@ void run_kernel(int read_fd, int write_fd)
                 }
             }
 
+            // // UPDATE: Recebe informação de estado de um processo (PC e memória)
+            // else if (strncmp(buffer, "UPDATE", 6) == 0)
+            // {
+            //     int id = buffer[8] - '1';
+            //     int lido_pc, lido_mem;
+            //     sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
+
+            //     pc_processos[id] = lido_pc;
+            //     mem_processos[id] = lido_mem;
+            // }
             // UPDATE: Recebe informação de estado de um processo (PC e memória)
             else if (strncmp(buffer, "UPDATE", 6) == 0)
             {
-                int id = buffer[8] - '1';
-                int lido_pc, lido_mem;
-                sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
+                char pid_str[3];
+                int num_pc, num_mem;
+                sscanf(buffer, "UPDATE %s %d %d", pid_str, &num_pc, &num_mem);
+                int id_update = pid_str[1] - '1';
 
-                pc_processos[id] = lido_pc;
-                mem_processos[id] = lido_mem;
+                pc_processos[id_update] = num_pc;
+                mem_processos[id_update] = num_mem;
+
+                // ====================================================================
+                // T2: MMU SIMULADA E TRATAMENTO DE PAGE FAULT
+                // Só testamos se o processo estiver ativamente a correr (estado 1)
+                // ====================================================================
+                if (estado_processos[id_update] == 1) 
+                {
+                    // 1. Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
+                    if (tabelas_paginas[id_update][num_mem].valid == 0) 
+                    {
+                        // PAGE FAULT! A página não está na RAM.
+                        printf(">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n", nomes[id_update], num_mem);
+                        
+                        // Incrementa o contador de faltas de página para o relatório final
+                        page_faults[id_update]++;
+
+                        // (A LÓGICA DE BLOQUEAR O PROCESSO E PEDIR AO SWAP ENTRARÁ AQUI NA FASE 2)
+                        // Por enquanto, apenas imprimimos a mensagem e deixamos o processo continuar,
+                        // para garantir que não quebramos o escalonador do T1.
+                    }
+                    else
+                    {
+                        // PAGE HIT! A página já está num quadro da RAM. Tudo OK.
+                        // Podemos opcionalmente imprimir um log ou apenas não fazer nada.
+                    }
+                }
+                // ====================================================================
             }
 
             // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado

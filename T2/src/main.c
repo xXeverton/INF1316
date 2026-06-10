@@ -35,6 +35,13 @@ int mem_processos[5] = {0, 0, 0, 0, 0};
 int io_counts_d1[5] = {0, 0, 0, 0, 0};
 int io_counts_d2[5] = {0, 0, 0, 0, 0};
 
+// Adicionei para o trabalho 2
+int page_faults[5] = {0, 0, 0, 0, 0};
+PageTableEntry tabelas_paginas[5][16];
+QuadroRAM memoria_ram[32];      // Qual processo é dono deste quadro (0 a 4)
+int ramFree[32];        // 1 = Quadro livre, 0 = Quadro Ocupado
+
+
 int main()
 {
     int fd[2];
@@ -46,6 +53,18 @@ int main()
     {
         perror("Falha ao criar o pipe");
         exit(1);
+    }
+
+    for (int i = 0; i < 32; i++) ramFree[i] = 1;
+
+    for (int i = 0; i < 5; i++)
+    {
+        for (int j = 0; j < 16; j++)
+        {
+            tabelas_paginas[i][j].valid = 0;
+            tabelas_paginas[i][j].frame = -1;
+            tabelas_paginas[i][j].modifyBit =0;
+        }
     }
 
     printf("A iniciar o Simulador de SO...\n");
