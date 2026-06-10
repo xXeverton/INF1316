@@ -1,0 +1,147 @@
+--------------------------------------------------------------------------------------
+
+[INF1316] LAB 10 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
+
+--------------------------------------------------------------------------------------
+1) Escreva um programa log_gen.c que usa void 
+gerar_operacoes(int n) para que ele escreva 10.000 operações em um 
+arquivo log.txt. 
+
+R.: Para simular um ambiente real de requisições, foi criado um programa 
+gerador de logs. Utilizando a função srand() para geração de números 
+aleatórios, o programa gera 10.000 operações divididas entre leituras 
+(R) e escritas (W), apontando para chaves (keys) no intervalo de 0 a 999.
+A saída padrão (stdout) foi redirecionada usando freopen() para criar 
+o arquivo "log.txt", que serviu de carga de testes para os simuladores.
+
+Como rodar?
+gcc log_gen.c -o log_gen
+./log_gen
+
+2) Escreva um outro programa main.c que”
+a)  cria um banco de dados hipotético de 1000 entradas (um vetor[1000] e 
+b) um cache de 100 entradas, e que 
+c) lê as entradas do arquivo log ciclicamente, em loop infinito.
+d) implementa a estratégias Cache-aside caching 
+e) e trata o sinal Cntl-Z, e nesse caso limpa todo o 
+
+R.: Nesta etapa, implementou-se o simulador principal contendo um banco de 
+dados lento (1000 posições, com atraso de 1 segundo por acesso) e um 
+cache rápido (100 posições). O mapeamento das chaves no cache foi 
+feito utilizando uma função de hash baseada no resto da divisão 
+(index = key % 100).
+
+- Leitura (R): A aplicação verifica o cache primeiro. Em caso de 
+  CACHE MISS, a aplicação busca no banco (sofrendo o atraso), salva 
+  no cache e retorna. 
+- Escrita (W): A aplicação grava o novo dado no banco e, para evitar 
+  dados desatualizados, INVALIDA a posição correspondente no cache 
+  (is_valid[index] = 0).
+- Tratamento de Sinais: Foi implementada a interceptação do sinal 
+  SIGTSTP (Ctrl-Z). Ao receber este sinal, o programa executa uma 
+  função que zera o vetor de validade, limpando o cache sem interromper 
+  a execução principal.
+
+Nota: A interceção do sinal Ctrl-Z (SIGTSTP) para a limpeza total e manual do cache está funcionando. 
+
+Como rodar? 
+gcc ex2_main.c -o ex2_main
+./ex2_main
+
+Saída:
+$ ./ex2_main
+[APP] CACHE MISS (Chave 178). [DB-READ] Lendo do BD -> Chave: 178, Valor: 178
+[APP] REQUISIÇÃO DE ESCRITA (Chave 917, Novo Valor 3500). [DB-WRITE] Gravando no BD -> Chave: 917, Novo Valor: 3500
+[APP] CACHE MISS (Chave 900). [DB-READ] Lendo do BD -> Chave: 900, Valor: 900
+[APP] REQUISIÇÃO DE ESCRITA (Chave 820, Novo Valor 4372). [DB-WRITE] Gravando no BD -> Chave: 820, Novo Valor: 4372
+[APP] CACHE MISS (Chave 916). [DB-READ] Lendo do BD -> Chave: 916, Valor: 916
+[APP] CACHE MISS (Chave 972). [DB-READ] Lendo do BD -> Chave: 972, Valor: 972
+[APP] CACHE MISS (Chave 592). [DB-READ] Lendo do BD -> Chave: 592, Valor: 592
+[APP] CACHE MISS (Chave 1). [DB-READ] Lendo do BD -> Chave: 1, Valor: 1
+[APP] REQUISIÇÃO DE ESCRITA (Chave 472, Novo Valor 3398). [DB-WRITE] Gravando no BD -> Chave: 472, Novo Valor: 3398
+[APP] CACHE MISS (Chave 867). [DB-READ] Lendo do BD -> Chave: 867, Valor: 867
+[APP] REQUISIÇÃO DE ESCRITA (Chave 135, Novo Valor 1906). [DB-WRITE] Gravando no BD -> Chave: 135, Novo Valor: 1906
+[APP] CACHE MISS (Chave 531). [DB-READ] Lendo do BD -> Chave: 531, Valor: 531
+[APP] REQUISIÇÃO DE ESCRITA (Chave 173, Novo Valor 4195). [DB-WRITE] Gravando no BD -> Chave: 173, Novo Valor: 4195
+[APP] REQUISIÇÃO DE ESCRITA (Chave 703, Novo Valor 4121). [DB-WRITE] Gravando no BD -> Chave: 703, Novo Valor: 4121
+^Z
+[SINAL] Cntl-Z interceptado! Limpando todo o cache...
+[APP] REQUISIÇÃO DE ESCRITA (Chave 994, Novo Valor 4134). [DB-WRITE] Gravando no BD -> Chave: 994, Novo Valor: 4134
+[APP] REQUISIÇÃO DE ESCRITA (Chave 534, Novo Valor 4926). [DB-WRITE] Gravando no BD -> Chave: 534, Novo Valor: 4926
+[APP] REQUISIÇÃO DE ESCRITA (Chave 224, Novo Valor 3720). [DB-WRITE] Gravando no BD -> Chave: 224, Novo Valor: 3720
+[APP] REQUISIÇÃO DE ESCRITA (Chave 549, Novo Valor 4618). [DB-WRITE] Gravando no BD -> Chave: 549, Novo Valor: 4618
+[APP] CACHE MISS (Chave 851). [DB-READ] Lendo do BD -> Chave: 851, Valor: 851
+[APP] CACHE MISS (Chave 479). [DB-READ] Lendo do BD -> Chave: 479, Valor: 479
+[APP] REQUISIÇÃO DE ESCRITA (Chave 875, Novo Valor 316). [DB-WRITE] Gravando no BD -> Chave: 875, Novo Valor: 316
+[APP] REQUISIÇÃO DE ESCRITA (Chave 408, Novo Valor 2128). [DB-WRITE] Gravando no BD -> Chave: 408, Novo Valor: 2128
+[APP] REQUISIÇÃO DE ESCRITA (Chave 1, Novo Valor 4927). [DB-WRITE] Gravando no BD -> Chave: 1, Novo Valor: 4927
+[APP] REQUISIÇÃO DE ESCRITA (Chave 526, Novo Valor 3034). [DB-WRITE] Gravando no BD -> Chave: 526, Novo Valor: 3034
+[APP] CACHE MISS (Chave 581). [DB-READ] Lendo do BD -> Chave: 581, Valor: 581
+[APP] REQUISIÇÃO DE ESCRITA (Chave 325, Novo Valor 2126). [DB-WRITE] Gravando no BD -> Chave: 325, Novo Valor: 2126
+[APP] REQUISIÇÃO DE ESCRITA (Chave 13, Novo Valor 650). [DB-WRITE] Gravando no BD -> Chave: 13, Novo Valor: 650
+^C
+
+
+3) faça o mesmo com a politica Cache write through 
+O simulador foi adaptado para a política Write-through. A lógica de 
+leitura permaneceu a mesma, mas a lógica de escrita foi alterada. 
+Em vez de invalidar o cache após uma gravação no banco, o sistema agora 
+ATUALIZA o cache simultaneamente com o novo valor (cache[index].value = value; 
+is_valid[index] = 1). Isso garante que o cache tenha sempre a 
+informação mais recente, sem gerar invalidações.
+
+Como rodar?
+gcc ex3_main.c -o ex3_main
+./ex3_main
+
+Saída:
+$ ./ex3_main
+[APP] CACHE MISS (Chave 178). [DB-READ] Lendo do BD -> Chave: 178, Valor: 178
+[APP] REQUISIÇÃO DE ESCRITA (Chave 917, Novo Valor 3500). [DB-WRITE] Gravando no BD -> Chave: 917, Novo Valor: 3500
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] CACHE MISS (Chave 900). [DB-READ] Lendo do BD -> Chave: 900, Valor: 900
+[APP] REQUISIÇÃO DE ESCRITA (Chave 820, Novo Valor 4372). [DB-WRITE] Gravando no BD -> Chave: 820, Novo Valor: 4372
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] CACHE MISS (Chave 916). [DB-READ] Lendo do BD -> Chave: 916, Valor: 916
+[APP] CACHE MISS (Chave 972). [DB-READ] Lendo do BD -> Chave: 972, Valor: 972
+[APP] CACHE MISS (Chave 592). [DB-READ] Lendo do BD -> Chave: 592, Valor: 592
+[APP] CACHE MISS (Chave 1). [DB-READ] Lendo do BD -> Chave: 1, Valor: 1
+[APP] REQUISIÇÃO DE ESCRITA (Chave 472, Novo Valor 3398). [DB-WRITE] Gravando no BD -> Chave: 472, Novo Valor: 3398
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] CACHE MISS (Chave 867). [DB-READ] Lendo do BD -> Chave: 867, Valor: 867
+[APP] REQUISIÇÃO DE ESCRITA (Chave 135, Novo Valor 1906). [DB-WRITE] Gravando no BD -> Chave: 135, Novo Valor: 1906
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] CACHE MISS (Chave 531). [DB-READ] Lendo do BD -> Chave: 531, Valor: 531
+[APP] REQUISIÇÃO DE ESCRITA (Chave 173, Novo Valor 4195). [DB-WRITE] Gravando no BD -> Chave: 173, Novo Valor: 4195
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] REQUISIÇÃO DE ESCRITA (Chave 703, Novo Valor 4121). [DB-WRITE] Gravando no BD -> Chave: 703, Novo Valor: 4121
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] REQUISIÇÃO DE ESCRITA (Chave 994, Novo Valor 4134). [DB-WRITE] Gravando no BD -> Chave: 994, Novo Valor: 4134
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] REQUISIÇÃO DE ESCRITA (Chave 534, Novo Valor 4926). [DB-WRITE] Gravando no BD -> Chave: 534, Novo Valor: 4926
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] REQUISIÇÃO DE ESCRITA (Chave 224, Novo Valor 3720). [DB-WRITE] Gravando no BD -> Chave: 224, Novo Valor: 3720
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] REQUISIÇÃO DE ESCRITA (Chave 549, Novo Valor 4618). [DB-WRITE] Gravando no BD -> Chave: 549, Novo Valor: 4618
+[APP] WRITE-THROUGH: Cache atualizado simultaneamente!\n[APP] CACHE MISS (Chave 851). [DB-READ] Lendo do BD -> Chave: 851, Valor: 851
+[APP] CACHE MISS (Chave 479). [DB-READ] Lendo do BD -> Chave: 479, Valor: 479
+C^
+
+4) Discuta as diferenças em termos de em termos de 
+tempo de processamento:
+
+Para analisar a diferença de desempenho, consideramos o seguinte cenário:
+1º) Escrita na chave 10 (Ex: W, 500, 10)
+2º) Leitura imediata da chave 10 (Ex: R, 10)
+
+->Cenário com Cache-aside:
+Na escrita, o banco leva 1s para gravar e o cache é invalidado. Na 
+leitura subsequente, como o cache está inválido, ocorre um CACHE MISS. 
+O sistema precisa ir ao banco novamente (mais 1s de atraso) para ler e 
+repopular o cache.
+Tempo total gasto: 2 segundos.
+
+->Cenário com Write-through:
+Na escrita, o banco leva 1s para gravar e o cache é ATUALIZADO no 
+mesmo instante. Na leitura subsequente, o dado já está atualizado e 
+pronto no cache, gerando um CACHE HIT instantâneo (0s de atraso).
+Tempo total gasto: 1 segundo.
+
+CONCLUSÃO:
+O modelo Write-through apresenta um desempenho muito superior em 
+cenários onde um dado é lido logo após ser escrito, pois elimina a 
+penalidade do "Miss" pós-gravação. Por outro lado, o Cache-aside pode 
+ser mais eficiente se o sistema possuir uma carga massiva de escritas 
+em dados que raramente serão lidos em seguida, poupando operações 
+desnecessárias de atualização na memória cache.
