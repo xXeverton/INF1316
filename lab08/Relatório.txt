@@ -1,0 +1,395 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+[INF1316] LAB 08 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 1 - Use o programa listaarquivo.c para imprimir o numero de inode, o tamanho (em bytes) e a idade em
+dias de cada arquivo do diretório corrente. Lembre-se que stat() espera o path completo do arquivo.
+
+- CÓDIGO: --------------------------------------------------------------------------------------------
+
+#include <sys/types.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/param.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define FALSE 0
+#define TRUE 1
+
+int file_select(const struct dirent *entry)
+{
+    if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0))
+        return (FALSE);
+    else
+        return (TRUE);
+}
+
+int main()
+{
+    char pathname[MAXPATHLEN];
+    struct dirent **files;
+    int count, i;
+    struct stat info;
+    time_t agora = time(NULL);
+
+    if (getcwd(pathname, sizeof(pathname)) == NULL) {
+        printf("Error getting path\n");
+        exit(0);
+    }
+
+    printf("Current Working Directory = %s\n", pathname);
+
+    count = scandir(pathname, &files, file_select, alphasort);
+
+    if (count <= 0) {
+        printf("No files in this directory\n");
+        exit(0);
+    }
+
+    printf("Number of files = %d\n", count);
+
+    for (i = 0; i < count; ++i) {
+        char fullpath[MAXPATHLEN];
+        sprintf(fullpath, "%s/%s", pathname, files[i]->d_name);
+
+        if (stat(fullpath, &info) == 0) {
+            double idade = difftime(agora, info.st_mtime) / (60 * 60 * 24);
+            printf("%-15s inode %lu  size: %ld  age: %.0f days\n",
+                   files[i]->d_name,
+                   (unsigned long)info.st_ino,
+                   (long)info.st_size,
+                   idade);
+        }
+
+        free(files[i]);
+    }
+
+    free(files);
+
+    return 0;
+}
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+
+gcc Ex1.c -o Ex1
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+
+./Ex1
+
+- SAÍDA: ----------------------------------------------------------------------------------------------
+
+Current Working Directory = /workspaces/INF1316/lab08
+Number of files = 2
+Ex1             inode 1310896  size: 16480  age: 0 days
+Ex1.c           inode 1310895  size: 1501  age: 0 days
+
+- RESPOSTA: -------------------------------------------------------------------------------------------
+
+O exercício mostrou como manipular informações de arquivos e diretórios usando funções do sistema operacional. 
+Com scandir() e file_select(), foi possível listar os arquivos do diretório atual, e com stat(), obter dados 
+como inode, tamanho e tempo de modificação. O cálculo da idade dos arquivos reforçou o entendimento sobre o 
+funcionamento do sistema de arquivos e a importância de usar corretamente o caminho completo e as estruturas 
+retornadas pelas funções da API Unix. 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 2 - Modifique o programa anterior para mostrar o número de links que cada arquivo possui. Depois, no 
+diretório corrente, execute o o comando da shell ln <arquivo> <nomeLink> e veja o que mudou na saída de seu programa.
+
+- CÓDIGO: --------------------------------------------------------------------------------------------
+
+#include <sys/types.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/param.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define FALSE 0
+#define TRUE 1
+
+int file_select(const struct dirent *entry)
+{
+    if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0))
+        return (FALSE);
+    else
+        return (TRUE);
+}
+
+int main()
+{
+    char pathname[MAXPATHLEN];
+    struct dirent **files;
+    int count, i;
+    struct stat info;
+    time_t agora = time(NULL);
+
+    if (getcwd(pathname, sizeof(pathname)) == NULL) {
+        printf("Error getting path\n");
+        exit(0);
+    }
+
+    printf("Current Working Directory = %s\n", pathname);
+
+    count = scandir(pathname, &files, file_select, alphasort);
+
+    if (count <= 0) {
+        printf("No files in this directory\n");
+        exit(0);
+    }
+
+    printf("Number of files = %d\n", count);
+
+    for (i = 0; i < count; ++i) {
+        char fullpath[MAXPATHLEN];
+        sprintf(fullpath, "%s/%s", pathname, files[i]->d_name);
+
+        if (stat(fullpath, &info) == 0) {
+            double idade = difftime(agora, info.st_mtime) / (60 * 60 * 24);
+            printf("%-15s inode %lu  size: %ld  links: %ld  age: %.0f days\n",
+                   files[i]->d_name,
+                   (unsigned long)info.st_ino,
+                   (long)info.st_size,
+                   (long)info.st_nlink,
+                   idade);
+        }
+
+        free(files[i]);
+    }
+    free(files);
+
+    return 0;
+}
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+
+gcc Ex2.c -o Ex2
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+
+./Ex2
+ln Ex1 link_Ex1
+./Ex2
+
+- SAÍDA: ----------------------------------------------------------------------------------------------
+
+ANTES DO ln:
+
+Current Working Directory = /workspaces/INF1316/lab08
+Number of files = 4
+Ex1             inode 1310896  size: 16480  links: 1  age: 0 days
+Ex1.c           inode 1310895  size: 1501  links: 1  age: 0 days
+Ex2             inode 1310898  size: 16480  links: 1  age: 0 days
+Ex2.c           inode 1310897  size: 1523  links: 1  age: 0 days
+
+DEPOIS DO ln:
+
+Current Working Directory = /workspaces/INF1316/lab08
+Number of files = 5
+Ex1             inode 1310896  size: 16480  links: 2  age: 0 days
+Ex1.c           inode 1310895  size: 1501  links: 1  age: 0 days
+Ex2             inode 1310898  size: 16480  links: 1  age: 0 days
+Ex2.c           inode 1310897  size: 1523  links: 1  age: 0 days
+link_Ex1        inode 1310896  size: 16480  links: 2  age: 0 days
+
+- RESPOSTA: -------------------------------------------------------------------------------------------
+
+Este exercício ilustrou o funcionamento do campo st_nlink na estrutura stat, responsável por registrar a 
+quantidade de referências a um mesmo inode. Ao criarmos um novo vínculo com o comando ln, observamos o incremento imediato desse contador, o que reforça o conceito estrutural de que a identidade dos dados no sistema de 
+arquivos está atrelada ao inode, e não aos nomes em nível de diretório.
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 3 - Escreva um programa que percorre recursivamente um diretório, a partir do diretório corrente, 
+somando o tamanho de todos os arquivos encontrados.
+
+- CÓDIGO: --------------------------------------------------------------------------------------------
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+long total_size = 0;  // soma total dos tamanhos dos arquivos
+
+// percorre recursivamente o diretório
+void browsedir(const char *current_dir) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat file_info;
+    char full_path[1024];
+
+    // tenta abrir o diretório
+    if (!(dir = opendir(current_dir))) {
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        // ignora as entradas "." e ".."
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // monta o caminho completo do arquivo
+        snprintf(full_path, sizeof(full_path), "%s/%s", current_dir, entry->d_name);
+
+        // obtém informações do arquivo/dir
+        if (stat(full_path, &file_info) == -1)
+            continue; 
+
+        // se for diretório, chama a função recursivamente
+        if (S_ISDIR(file_info.st_mode)) {
+            browsedir(full_path);
+        }
+        // se for arquivo regular, soma seu tamanho
+        else if (S_ISREG(file_info.st_mode)) {
+            total_size += file_info.st_size;
+        }
+    }
+
+    closedir(dir);
+}
+
+int main(void) {
+    char current_path[1024];
+
+    // obtém o diretório corrente
+    if (getcwd(current_path, sizeof(current_path)) == NULL) {
+        puts(">>Error ao obter o dir atual");
+        return 1;
+    }
+
+    browsedir(current_path);
+    printf(">>> tamanho total dos arquivos encontrados = %ld bytes\n", total_size);
+
+    return 0;
+}
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+
+gcc Ex3.c -o Ex3
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+
+./Ex3
+
+- SAÍDA: ----------------------------------------------------------------------------------------------
+
+>>> tamanho total dos arquivos encontrados = 70446 bytes
+
+- RESPOSTA: -------------------------------------------------------------------------------------------
+
+A prática ilustrou os mecanismos de travessia em árvores de diretórios, reforçando a compreensão da estrutura 
+hierárquica do sistema de arquivos no Linux. Além disso, o exercício evidenciou a utilidade prática das system calls opendir, readdir e stat na inspeção, filtragem e manipulação automatizada de propriedades de arquivos e pastas.
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+QUESTÃO 4 - Modifique o programa anterior para mostrar recursivamente os diretórios e arquivos aninhados.
+
+- CÓDIGO: --------------------------------------------------------------------------------------------
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+long total_size = 0;  // soma total dos tamanhos dos arquivos
+
+// percorre recursivamente e mostra diretórios e arquivos com indentação
+void browse_dir(const char *current_dir, int level) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat file_info;
+    char full_path[1024];
+
+    // tenta abrir o diretório
+    if (!(dir = opendir(current_dir))) {
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        // ignora "." e ".."
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // monta o caminho completo
+        snprintf(full_path, sizeof(full_path), "%s/%s", current_dir, entry->d_name);
+
+        // obtém informações
+        if (stat(full_path, &file_info) == -1)
+            continue;
+
+        // imprime nome com indentação proporcional ao nível
+        printf("%*s[%s]\n", level * 2, "", entry->d_name);
+
+        if (S_ISDIR(file_info.st_mode)) {
+            // chamada recursiva para subdiretórios
+            browse_dir(full_path, level + 1);
+        } else if (S_ISREG(file_info.st_mode)) {
+            total_size += file_info.st_size;  // soma tamanho de arquivos regulares
+        }
+    }
+
+    closedir(dir);
+}
+
+int main(void) {
+    char current_path[1024];
+
+    if (getcwd(current_path, sizeof(current_path)) == NULL) {
+        perror("Error getting current directory");
+        return 1;
+    }
+
+    printf("Conteúdos da árvore de dir:\n");
+    browse_dir(current_path, 0);
+    printf("\n>>> tamanho total dos arquivos encontrados  = %ld bytes\n", total_size);
+
+    return 0;
+}
+
+- LINHA DE COMPILAÇÃO: --------------------------------------------------------------------------------
+
+gcc Ex4.c -o Ex4
+
+- LINHA DE EXECUÇÃO: ----------------------------------------------------------------------------------
+
+./Ex4
+
+- SAÍDA: ----------------------------------------------------------------------------------------------
+
+Conteúdos da árvore de dir:
+[Ex1.c]
+[teste]
+  [teste]
+    [teste2]
+      [teste.txt]
+[Ex2]
+[Ex4.c]
+[Ex2.c]
+[link_Ex1]
+[Ex3]
+[Ex4]
+[Ex1]
+[Ex3.c]
+
+>>> tamanho total dos arquivos encontrados  = 88606 bytes
+
+- RESPOSTA: -------------------------------------------------------------------------------------------
+
+A prática aprofunda os conceitos de navegação ao introduzir a representação hierárquica da árvore de diretórios. 
+A aplicação da indentação atua como um reflexo direto da profundidade da recursão, evidenciando como a integração 
+dessas chamadas de sistema viabiliza a varredura completa, estruturada e automatizada do sistema de arquivos.
