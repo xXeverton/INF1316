@@ -4,327 +4,260 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include "common.h"
 
-/*
- * KERNELSIM - Simulador de Kernel Preemptivo
- * 
- * Gerencia 5 processos de aplicação usando escalonamento Round-Robin com preemption.
- * Responde a três tipos de interrupções:
- * - IRQ0: TimeSlice (força troca de contexto)
- * - IRQ1: Hardware D1 completa uma operação (desbloqueia processos)
- * - IRQ2: Hardware D2 completa uma operação (desbloqueia processos)
- * 
- * Estados dos processos:
- * 0 = PRONTO (aguardando CPU)
- * 1 = EXECUTANDO (em posse da CPU)
- * 2 = BLOQUEADO (aguardando E/S)
- * 3 = TERMINADO (finalizou seus MAX ciclos)
- */
+// --- NOVIDADES DO T2: FILAS DE REQUISIÇÃO ---
+// Guardam as respostas (REPs) que chegam da rede até o Hardware liberar (IRQ1 ou IRQ2)
+SFP_Message file_request_queue[9];
+int tamanho_file_queue = 0;
 
-/*
- * Lê uma mensagem completa do pipe terminada em \0
- * As mensagens vêm do InterController (interrupções) ou dos processos (UPDATE/SYSCALL)
- */
-int ler_mensagem_pipe(int fd, char *buffer)
-{
-    int i = 0;
-    char c;
-    // Lê 1 único caractere por vez
-    while (read(fd, &c, 1) > 0)
-    {
+SFP_Message dir_request_queue[9];
+int tamanho_dir_queue = 0;
+
+// --- NOVIDADES DO T2: REDE E MEMÓRIA COMPARTILHADA ---
+int sockfd;
+struct sockaddr_in serveraddr;
+char *shm_ptrs[5]; // Ponteiros para a shmem de cada aplicação (A1 a A5)
+
+// Variáveis de Escalonamento (Mantidas do T1)
+int processo_atual = -1;
+
+// Função do T1 para ler do Pipe (mantida intacta)
+int ler_mensagem_pipe(int fd, char *buffer) {
+    int i = 0; char c;
+    while (read(fd, &c, 1) > 0) {
         buffer[i++] = c;
-        if (c == '\0')
-        {
-            return i; // Mensagem completa encontrada e separada!
-        }
+        if (c == '\0') return i;
     }
-    return 0; // Pipe vazio ou fechado
+    return 0; 
 }
 
-// ----- INICIALIZAÇÃO DO KERNELSIM E CRIAÇÃO DOS PROCESSOS -----
-
-void run_kernel(int read_fd, int write_fd)
-{
+// ----- INICIALIZAÇÃO DO KERNELSIM -----
+void run_kernel(int read_fd, int write_fd) {
     signal(SIGTSTP, handle_sigtstp);
 
-    char buffer[50];
-    printf("KernelSim iniciado e a aguardar interrupções...\n");
-
-    char fd_str[10];
-    sprintf(fd_str, "%d", write_fd);
-
-    // Cria os 5 processos de aplicação
-    for (int i = 0; i < 5; i++)
-    {
-        pid_t pid = fork();
-
-        if (pid < 0)
-        {
-            printf("Erro ao criar processo filho\n");
-            exit(1);
-        }
-
-        if (pid == 0)
-        {
-            // Filho executa o programa da aplicação
-            execl("./bin/app", "./bin/app", nomes[i], fd_str, NULL);
-            perror("Falha no execl\n");
-            exit(1);
-        }
-        else
-        {
-            // Pai armazena o PID e pausa imediatamente
-            processos[i] = pid;
-            usleep(10000);
-            kill(pid, SIGSTOP);
-            printf("Kernel: Processo %s (PID %d) criado e pausado\n", nomes[i], pid);
-        }
+    // 1. CONEXÃO COM A MEMÓRIA COMPARTILHADA (shmem) DAS APLICAÇÕES
+    for (int i = 0; i < 5; i++) {
+        key_t shm_key = 8000 + (i + 1); // Chaves 8001 a 8005
+        int shm_id = shmget(shm_key, MAX_PAYLOAD, IPC_CREAT | 0666);
+        shm_ptrs[i] = (char *) shmat(shm_id, NULL, 0);
     }
 
-    // Filas para processos bloqueados aguardando I/O
-    int fila_d1[5], tamanho_d1 = 0;
-    int fila_d2[5], tamanho_d2 = 0;
+    // 2. CONFIGURAÇÃO DO SOCKET UDP CLIENTE
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("ERRO abrindo socket UDP no Kernel");
+        exit(1);
+    }
+    
+    struct hostent *server = gethostbyname("127.0.0.1"); // localhost
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(8080); // Porta padrão do nosso SFSS
 
-    // Escalonador Round-Robin: começa pelo primeiro processo
-    int processo_atual = 0;
-    kill(processos[processo_atual], SIGCONT);
-    estado_processos[processo_atual] = 1;
-    printf("Kernel: Iniciando a execução com %s (PID %d)\n", nomes[processo_atual], processos[processo_atual]);
+    printf(">>> KernelSim iniciado como Micro-Kernel Cliente UDP na porta 8080 <<<\n");
 
-    // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
+    // =========================================================================
+    // 3. CRIAÇÃO DOS PROCESSOS DE APLICAÇÃO (A1 a A5)
+    // =========================================================================
+    char write_fd_str[2];
+    sprintf(write_fd_str, "%d", write_fd); // Converte o Pipe FD para string para o execl
 
-    while (1)
-    {
-        int status;
+    for (int i = 0; i < 5; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Código do filho: substitui a memória pelo binário 'app'
+            execl("./app", "app", nomes[i], write_fd_str, NULL);
+            perror("Erro no execl do aplicativo");
+            exit(1);
+        } else if (pid > 0) {
+            // Código do Kernel (Pai): registra o PID na nossa tabela virtual
+            processos[i] = pid;
+            estado_processos[i] = 0; // PRONTO
+        } else {
+            perror("Erro no fork");
+            exit(1);
+        }
+    }
+    // =========================================================================
+
+    char buffer[10];
+
+    // ----- LOOP INFINITO DO KERNEL -----
+    while (1) {
+        // A. ESCUTAR A REDE DE FORMA NÃO-BLOQUEANTE (O segredo do T2!)
+        SFP_Message msg_rx;
+        socklen_t serverlen = sizeof(serveraddr);
+        // O MSG_DONTWAIT faz o Kernel perguntar à rede e seguir em frente se não houver nada, sem travar!
+        int n = recvfrom(sockfd, &msg_rx, sizeof(SFP_Message), MSG_DONTWAIT, (struct sockaddr *) &serveraddr, &serverlen);
         
-        // Verifica se algum processo finalizou sua execução
-        for (int i = 0; i < 5; i++)
-        {
-            if (estado_processos[i] != 3)
-            {
-                if (waitpid(processos[i], &status, WNOHANG) > 0)
-                {
-                    estado_processos[i] = 3;
-                    printf("\n>>> Kernel: Processo %s finalizou sua execucao! <<<\n\n", nomes[i]);
-                }
-
-                // Verifica se todos os processos terminaram
-                int processos_terminados = 0;
-                for (int i = 0; i < 5; i++)
-                {
-                    if (estado_processos[i] == 3)
-                        processos_terminados++;
-                }
-
-                // Se todos terminaram, encerra o simulador
-                if (processos_terminados == 5)
-                {
-                    printf("\n=======================================================\n");
-                    printf(">>> TODOS OS PROCESSOS APLICAÇÃO TERMINARAM <<<\n");
-                    printf(">>> INICIANDO DESLIGAMENTO DO KERNEL...     <<<\n");
-                    printf("=======================================================\n");
-                    kill(0, SIGKILL);
-                }
+        if (n > 0) {
+            // Se chegou resposta da rede, não acordamos o processo na hora! Colocamos na fila correta:
+            if (strncmp(msg_rx.op_type, "RD-REP", 6) == 0 || strncmp(msg_rx.op_type, "WR-REP", 6) == 0) {
+                file_request_queue[tamanho_file_queue++] = msg_rx;
+                printf(">>> Kernel: Resposta de ARQUIVO recebida da rede. Enfileirada na File-Queue.\n");
+            } else {
+                dir_request_queue[tamanho_dir_queue++] = msg_rx;
+                printf(">>> Kernel: Resposta de DIRETÓRIO recebida da rede. Enfileirada na Dir-Queue.\n");
             }
         }
 
-        // Aguarda uma mensagem do pipe
-        if (ler_mensagem_pipe(read_fd, buffer) > 0)
-        {
-
-            // IRQ0: TimeSlice terminou - força troca de contexto (preemption)
-            if (strcmp(buffer, "IRQ0") == 0)
-            {
-                // Pausa o processo atual se estiver executando
-                if (estado_processos[processo_atual] == 1)
-                {
+        // B. ESCUTAR O PIPE (Comunicação com Hardware e Apps)
+        if (ler_mensagem_pipe(read_fd, buffer) > 0) {
+            
+            // --- IRQ0: Escalonamento Round-Robin (TimeSlice) ---
+            if (strcmp(buffer, "IRQ0") == 0) {
+                if (processo_atual != -1 && estado_processos[processo_atual] == 1) {
                     kill(processos[processo_atual], SIGSTOP);
-                    estado_processos[processo_atual] = 0;
+                    estado_processos[processo_atual] = 0; 
                 }
-
-                // Encontra o próximo processo PRONTO (em round-robin)
-                for (int j = 0; j < 5; j++)
-                {
-                    processo_atual = (processo_atual + 1) % 5;
-                    if (estado_processos[processo_atual] == 0)
-                    {
+                for (int i = 1; i <= 5; i++) {
+                    int next = (processo_atual + i) % 5;
+                    if (estado_processos[next] == 0) {
+                        processo_atual = next;
                         estado_processos[processo_atual] = 1;
                         kill(processos[processo_atual], SIGCONT);
-                        printf("--- Troca de Contexto por IRQ0: Agora rodando %s ---\n", nomes[processo_atual]);
                         break;
                     }
                 }
             }
 
-            // // UPDATE: Recebe informação de estado de um processo (PC e memória)
-            // else if (strncmp(buffer, "UPDATE", 6) == 0)
-            // {
-            //     int id = buffer[8] - '1';
-            //     int lido_pc, lido_mem;
-            //     sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
+            // --- IRQ1: Resposta de Hardware para ARQUIVOS (Desbloqueio) ---
+            else if (strcmp(buffer, "IRQ1") == 0) {
+                if (tamanho_file_queue > 0) {
+                    SFP_Message rep = file_request_queue[0]; // Pega a mais antiga (FIFO)
+                    int owner_id = rep.owner;
 
-            //     pc_processos[id] = lido_pc;
-            //     mem_processos[id] = lido_mem;
-            // }
-            // UPDATE: Recebe informação de estado de um processo (PC e memória)
-            else if (strncmp(buffer, "UPDATE", 6) == 0)
-            {
-                char pid_str[3];
-                int num_pc, num_mem;
-                sscanf(buffer, "UPDATE %s %d %d", pid_str, &num_pc, &num_mem);
-                int id_update = pid_str[1] - '1';
-
-                pc_processos[id_update] = num_pc;
-                mem_processos[id_update] = num_mem;
-
-                // ====================================================================
-                // T2: MMU SIMULADA E TRATAMENTO DE PAGE FAULT
-                // Só testamos se o processo estiver ativamente a correr (estado 1)
-                // ====================================================================
-                if (estado_processos[id_update] == 1) 
-                {
-                    // 1. Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
-                    if (tabelas_paginas[id_update][num_mem].valid == 0) 
-                    {
-                        // PAGE FAULT! A página não está na RAM.
-                        printf(">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n", nomes[id_update], num_mem);
-                        
-                        // Incrementa o contador de faltas de página para o relatório final
-                        page_faults[id_update]++;
-
-                        // (A LÓGICA DE BLOQUEAR O PROCESSO E PEDIR AO SWAP ENTRARÁ AQUI NA FASE 2)
-                        // Por enquanto, apenas imprimimos a mensagem e deixamos o processo continuar,
-                        // para garantir que não quebramos o escalonador do T1.
+                    // Despeja os dados na Memória Compartilhada da aplicação dona
+                    if (strncmp(rep.op_type, "RD-REP", 6) == 0) {
+                        sprintf(shm_ptrs[owner_id], "Leitura do SFSS (Offset %d): %s", rep.offset, rep.payload);
+                    } else {
+                        sprintf(shm_ptrs[owner_id], "Escrita no SFSS confirmada! Offset final: %d", rep.offset);
                     }
-                    else
-                    {
-                        // PAGE HIT! A página já está num quadro da RAM. Tudo OK.
-                        // Podemos opcionalmente imprimir um log ou apenas não fazer nada.
-                    }
-                }
-                // ====================================================================
-            }
 
-            // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado
-            else if (strncmp(buffer, "SYSCALL", 7) == 0)
-            {
-                // Formato: "SYSCALL A1 D1 R"
-                printf("Kernel recebeu: %s \n", buffer);
+                    // Acorda a aplicação
+                    estado_processos[owner_id] = 0; // Vai para PRONTO
+                    printf(">>> Kernel (IRQ1): Arquivo concluído! Dados na ShMem de %s. Processo PRONTO.\n", nomes[owner_id]);
 
-                int id_bloqueado = buffer[9] - '1';
-                disp_bloqueado[id_bloqueado] = buffer[12];
-                oper_bloqueado[id_bloqueado] = buffer[14];
-
-                // Conta os acessos a cada dispositivo (para o relatório)
-                if (buffer[12] == '1')
-                    io_counts_d1[id_bloqueado]++;
-                else if (buffer[12] == '2')
-                    io_counts_d2[id_bloqueado]++;
-
-                // Pausa o processo imediatamente
-                kill(processos[id_bloqueado], SIGSTOP);
-                estado_processos[id_bloqueado] = 2;
-
-                // Coloca na fila de espera do dispositivo apropriado
-                if (buffer[12] == '1')
-                {
-                    fila_d1[tamanho_d1++] = id_bloqueado;
-                    printf("Kernel: Processo %s foi bloqueado e colocado na Fila D1.\n", nomes[id_bloqueado]);
-                }
-                else if (buffer[12] == '2')
-                {
-                    fila_d2[tamanho_d2++] = id_bloqueado;
-                    printf("Kernel: Processo %s foi bloqueado e colocado na Fila D2.\n", nomes[id_bloqueado]);
-                }
-
-                // Se o processo que pediu I/O era o que estava executando,
-                // precisa escolher outro para rodar na CPU
-                if (processo_atual == id_bloqueado)
-                {
-                    for (int j = 0; j < 5; j++)
-                    {
-                        processo_atual = (processo_atual + 1) % 5;
-                        if (estado_processos[processo_atual] == 0)
-                        {
-                            estado_processos[processo_atual] = 1;
-                            kill(processos[processo_atual], SIGCONT);
-                            printf("--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n", nomes[processo_atual]);
-                            break;
-                        }
-                    }
+                    // Anda a fila FIFO
+                    for (int k = 0; k < tamanho_file_queue - 1; k++) file_request_queue[k] = file_request_queue[k + 1];
+                    tamanho_file_queue--;
                 }
             }
 
-            // IRQ1: Dispositivo D1 completou uma operação de E/S
-            else if (strcmp(buffer, "IRQ1") == 0)
-            {
-                if (tamanho_d1 > 0)
-                {
-                    // Desbloqueia o primeiro processo que está aguardando D1
-                    int id_acordado = fila_d1[0];
-                    estado_processos[id_acordado] = 0;
-                    printf(">>> Kernel: Hardware D1 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    
-                    // Remove o processo da fila (FIFO)
-                    for (int k = 0; k < tamanho_d1 - 1; k++)
-                    {
-                        fila_d1[k] = fila_d1[k + 1];
+            // --- IRQ2: Resposta de Hardware para DIRETÓRIOS (Desbloqueio) ---
+            else if (strcmp(buffer, "IRQ2") == 0) {
+                if (tamanho_dir_queue > 0) {
+                    SFP_Message rep = dir_request_queue[0]; // Pega a mais antiga (FIFO)
+                    int owner_id = rep.owner;
+
+                    // Despeja na Memória Compartilhada
+                    if (strncmp(rep.op_type, "DL-REP", 6) == 0) {
+                        sprintf(shm_ptrs[owner_id], "Listagem de %d itens: %s", rep.nrnames, rep.payload);
+                    } else {
+                        sprintf(shm_ptrs[owner_id], "Novo caminho de diretorio: %s", rep.path);
                     }
-                    tamanho_d1--;
+
+                    estado_processos[owner_id] = 0; 
+                    printf(">>> Kernel (IRQ2): Diretório concluído! Dados na ShMem de %s. Processo PRONTO.\n", nomes[owner_id]);
+
+                    for (int k = 0; k < tamanho_dir_queue - 1; k++) dir_request_queue[k] = dir_request_queue[k + 1];
+                    tamanho_dir_queue--;
                 }
             }
 
-            // IRQ2: Dispositivo D2 completou uma operação de E/S
-            else if (strcmp(buffer, "IRQ2") == 0)
-            {
-                if (tamanho_d2 > 0)
-                {
-                    // Desbloqueia o primeiro processo que está aguardando D2
-                    int id_acordado = fila_d2[0];
-                    estado_processos[id_acordado] = 0;
-                    printf(">>> Kernel: Hardware D2 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    
-                    // Remove o processo da fila (FIFO)
-                    for (int k = 0; k < tamanho_d2 - 1; k++)
-                    {
-                        fila_d2[k] = fila_d2[k + 1];
-                    }
-                    tamanho_d2--;
+            // --- SYSCALL: Envio do pedido pela REDE ---
+            else if (strncmp(buffer, "SYSCALL", 7) == 0) {
+                char app[3], op[10], path[128], extra1[64], extra2[MAX_PAYLOAD];
+                int arg_count = sscanf(buffer, "SYSCALL %s %s %s %s %s", app, op, path, extra1, extra2);
+                
+                int app_id = app[1] - '1'; // "A1" vira 0
+
+                // 1. Montamos o Datagrama SFP
+                SFP_Message req;
+                memset(&req, 0, sizeof(SFP_Message));
+                strcpy(req.op_type, op);
+                req.owner = app_id;
+                strcpy(req.path, path);
+                req.path_len = strlen(path);
+
+                // Preenche os campos específicos dependendo da operação
+                if (strncmp(op, "RD-REQ", 6) == 0) {
+                    req.offset = atoi(extra1);
+                } else if (strncmp(op, "WR-REQ", 6) == 0) {
+                    req.offset = atoi(extra1);
+                    if (arg_count == 5) strcpy(req.payload, extra2);
+                } else if (strncmp(op, "DC-REQ", 6) == 0 || strncmp(op, "DR-REQ", 6) == 0) {
+                    strcpy(req.dirname, extra1);
+                    req.dir_len = strlen(extra1);
                 }
+
+                // 2. Dispara o pacote UDP pela rede para o SFSS
+                sendto(sockfd, &req, sizeof(SFP_Message), 0, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+                printf(">>> Kernel: Mensagem %s de %s enviada p/ SFSS via UDP.\n", op, app);
+
+                // 3. Encara (bloqueia) a aplicação que pediu
+                kill(processos[app_id], SIGSTOP);
+                estado_processos[app_id] = 2; // BLOQUEADO
+                
+                // Grava o motivo no PCB para o relatório do Ctrl+Z
+                disp_bloqueado[app_id] = (strncmp(op, "R", 1) == 0 || strncmp(op, "W", 1) == 0) ? '1' : '2'; // 1=Arq, 2=Dir
+                oper_bloqueado[app_id] = op[0]; // Pega a primeira letra (R, W, D)
+
+                // Força o escalonamento imediatamente
+                if (processo_atual == app_id) {
+                    processo_atual = -1; // Libera a roleta
+                }
+            }
+
+            // --- UPDATE: Atualiza PCB ---
+            else if (strncmp(buffer, "UPDATE", 6) == 0) {
+                char app[3]; int pc, mem;
+                sscanf(buffer, "UPDATE %s %d %d", app, &pc, &mem);
+                int idx = app[1] - '1';
+                pc_processos[idx] = pc;
+                mem_processos[idx] = mem;
             }
         }
+
+        // Evita consumo abusivo de CPU no loop infinito
+        usleep(1000); 
     }
 }
 
-// ----- RELATÓRIO DE ESTADO (EXIBIDO AO APERTAR CTRL+Z) -----
-
-void handle_sigtstp(int sig)
-{
+// ----- RELATÓRIO DE DIAGNÓSTICO (CTRL+Z) -----
+void handle_sigtstp(int sig) {
     printf("\n\n=======================================================\n");
-    printf("     SIMULAÇÃO PAUSADA (Ctrl+Z) - STATUS DO SISTEMA    \n");
+    printf("     SIMULAÇÃO PAUSADA (Ctrl+Z) - MICRO-KERNEL T2      \n");
     printf("=======================================================\n");
 
-    for (int i = 0; i < 5; i++)
-    {
+    for (int i = 0; i < 5; i++) {
         printf("Processo [%s]:\n", nomes[i]);
         printf("  - PC Atual      : %d\n", pc_processos[i]);
         printf("  - Memoria       : m%02d\n", mem_processos[i]);
-        printf("  - Acessos a D1  : %d vezes\n", io_counts_d1[i]);
-        printf("  - Acessos a D2  : %d vezes\n", io_counts_d2[i]);
 
         printf("  - Estado        : ");
-        if (estado_processos[i] == 0)
-            printf("PRONTO\n");
-        else if (estado_processos[i] == 1)
-            printf("EXECUTANDO (CPU)\n");
-        else if (estado_processos[i] == 2)
-            printf("BLOQUEADO (Aguardando D%c, operacao %c)\n", disp_bloqueado[i], oper_bloqueado[i]);
-        else if (estado_processos[i] == 3)
-            printf("TERMINADO\n");
-
+        if (estado_processos[i] == 0) printf("PRONTO\n");
+        else if (estado_processos[i] == 1) printf("EXECUTANDO (CPU)\n");
+        else if (estado_processos[i] == 2) {
+            printf("BLOQUEADO ");
+            if (disp_bloqueado[i] == '1') printf("(Aguardando resposta de ARQUIVO no IRQ1)\n");
+            else printf("(Aguardando resposta de DIRETORIO no IRQ2)\n");
+        }
+        else if (estado_processos[i] == 3) printf("TERMINADO\n");
         printf("-------------------------------------------------------\n");
     }
+
+    printf("\n--- FILAS DE REDE (SFSS) ---\n");
+    printf("File-Request-Queue : %d pacote(s) aguardando o próximo IRQ1\n", tamanho_file_queue);
+    printf("Dir-Request-Queue  : %d pacote(s) aguardando o próximo IRQ2\n", tamanho_dir_queue);
 
     printf("\nPressione [ENTER] para retomar a simulação...\n");
     getchar();

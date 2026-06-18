@@ -1,53 +1,49 @@
-```T1/
-├── src/                 
-│   ├── main.c           
-│   ├── kernel.c         
-│   ├── controller.c     
-│   ├── app.c            
-│   └── common.h         
-├── bin/                 
-├── docs/                
-│   └── relatorio.pdf    
-└── Makefile
-```
+INF1316 - Trabalho 2: Simulador de Micro-Kernel e SFSS (UDP)
+Objetivo
+Este projeto estende um simulador de núcleo de Sistema Operacional (KernelSim), adicionando suporte a um Sistema de Arquivos Remoto (SFSS). O Kernel gerencia processos de aplicação que realizam leitura, escrita e manipulação de diretórios remotos, comunicando-se com o servidor através de um protocolo customizado sobre UDP (SFP - Simple File Protocol).
 
-## O que vai em cada lugar:
-src/ (Código-fonte): Onde toda a sua programação vai ficar. Separar as responsabilidades em arquivos diferentes facilita muito a manutenção.
+Estrutura de Arquivos
+kernel.c: O micro-kernel. Gerencia o escalonamento Round-Robin, comunicação com as aplicações via memória compartilhada e o enfileiramento das respostas UDP.
 
-main.c: Será o ponto de partida. Ele vai configurar o Pipe e fazer o primeiro fork() para iniciar o Kernel e o Controlador.
+sfss.c: O servidor remoto stateless. Escuta a rede, executa as operações nos arquivos físicos locais e devolve os dados e offsets via UDP.
 
-kernel.c: Conterá a lógica do KernelSim (receber interrupções, gerenciar filas e mandar sinais).
+app.c: Os processos de aplicação (A1 a A5). Rodam em loop consumindo CPU virtual e sorteando System Calls de I/O repassadas ao kernel via pipe.
 
-controller.c: Conterá o loop do InterController Sim (gerando os sorteios e enviando os IRQs).
+controller.c: O simulador de interrupções. Gera os sinais de hardware para o kernel: IRQ0 (clock) e IRQ1/IRQ2 (conclusão de I/O na rede).
 
-app.c: O código padrão que os processos de aplicação (A1 a A5) vão executar usando exec().
+main.c: Ponto de entrada do sistema. Inicializa os pipes de comunicação e cria os processos base (fork).
 
-common.h: Um arquivo de cabeçalho super importante para guardar as constantes (como o MAX), as estruturas de dados (como o contexto dos processos) e as assinaturas das funções para que todos os arquivos conversem entre si.
+common.h: Define a estrutura das mensagens SFP (Datagramas UDP) e as tabelas globais da simulação (PCB).
 
-bin/ (Binários): Uma pasta vazia onde os executáveis gerados pela compilação serão salvos, mantendo a raiz do projeto limpa.
+Makefile: Script para automatizar a compilação do projeto.
 
-docs/ (Documentação): Onde você vai guardar o relatório final exigido no enunciado explicando a arquitetura do seu trabalho.
+Como Compilar e Executar
+1. Criar a árvore de diretórios do servidor
+Como o servidor é stateless, os diretórios físicos base dos processos precisam existir antes da execução. Rode os comandos abaixo no terminal:
 
-Makefile: O script que vai automatizar a compilação de todos esses arquivos do src/ e jogar o resultado no bin/ com um único comando.
+mkdir -p SFSS-root-dir/A0/dir_teste
+mkdir -p SFSS-root-dir/A1/dir_teste
+mkdir -p SFSS-root-dir/A2/dir_teste
+mkdir -p SFSS-root-dir/A3/dir_teste
+mkdir -p SFSS-root-dir/A4/dir_teste
+mkdir -p SFSS-root-dir/A5/dir_teste
 
+2. Compilar o projeto
+Na mesma pasta dos arquivos fonte, execute o Makefile:
 
-## Como Rodar?
-
-no terminal digite:
-
-```bash
 make
-```
 
-Depois digite:
+3. Iniciar o Servidor (SFSS)
+Em um terminal, inicie o servidor remoto para que ele fique em escuta na porta 8080:
 
-```bash
-./bin/simulador
-```
+./sfss
 
+4. Iniciar o Micro-Kernel (Simulação)
+Abra um novo terminal, navegue até a pasta do projeto e inicie a simulação:
 
-Para limpar tudo (caso queira começar do zero):
+./t2
 
-```bash
-make clean
-```
+Controles de Diagnóstico
+Pausar e Inspecionar: No terminal do ./t2, pressione Ctrl+Z para pausar a simulação e imprimir o relatório completo de estado dos processos (PCBs) e o tamanho das filas de rede. Pressione ENTER para retomar.
+
+Encerrar: Pressione Ctrl+C em ambos os terminais para finalizar a execução e liberar as portas de rede.

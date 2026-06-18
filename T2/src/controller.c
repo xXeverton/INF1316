@@ -28,7 +28,7 @@ void run_controller(int write_fd)
     signal(SIGTSTP, SIG_IGN);
 
     srand(time(NULL));
-    char msg[3];
+    char msg[10];
 
     while (1)
     {
