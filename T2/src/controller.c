@@ -7,7 +7,7 @@
 #include "common.h"
 
 /*
- * INTERCONTROLLER SIM - Simulador de Controlador de Interrupções
+ * INTERCONTROLLER SIM - Simulador de Controlador de Interrupções (T2)
  * 
  * Este processo emula o hardware responsavel por gerar interrupções:
  * 
@@ -15,13 +15,11 @@
  *       Informa ao Kernel que a fatia de tempo de um processo terminou,
  *       forçando uma troca de contexto (preemption).
  * 
- * IRQ1 (Dispositivo D1): 10% de probablidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D1 terminou.
- *       Como D1 é rápido, tem maior probabilidade que D2.
+ * IRQ1 (Arquivos): 10% de probablidade a cada 500ms
+ *       Emula a conclusão de uma operação sobre Arquivos (read, write) no servidor remoto SFSS.
  * 
- * IRQ2 (Dispositivo D2): 5% de probabilidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D2 terminou.
- *       D2 é 20x mais lento que D1.
+ * IRQ2 (Diretórios): 2% de probabilidade a cada 500ms
+ *       Emula a conclusão de uma operação sobre Diretórios (add, rem, listdir) no servidor remoto SFSS.
  */
 
 void run_controller(int write_fd)
@@ -30,7 +28,7 @@ void run_controller(int write_fd)
     signal(SIGTSTP, SIG_IGN);
 
     srand(time(NULL));
-    char msg[50];
+    char msg[3];
 
     while (1)
     {
@@ -42,17 +40,18 @@ void run_controller(int write_fd)
         strcpy(msg, "IRQ0");
         write(write_fd, msg, strlen(msg) + 1);
 
-        // Sorteia interrupções de E/S de forma aleatória
+        // Sorteia interrupções de hardware/rede de forma aleatória (0 a 99)
         int probabilidade = rand() % 100;
 
-        // IRQ1: 10% de probabilidade (D1 é rápido)
+        // IRQ1: 10% de probabilidade (Conclusão de operação em Arquivo)
         if (probabilidade < 10)
         {
             strcpy(msg, "IRQ1");
             write(write_fd, msg, strlen(msg) + 1);
         }
-        // IRQ2: 5% de probabilidade (D2 é lento)
-        else if (probabilidade < 15)
+        // IRQ2: 2% de probabilidade (Conclusão de operação em Diretório)
+        // Se não caiu nos primeiros 10% (0 a 9), testamos se caiu nos próximos 2% (10 ou 11)
+        else if (probabilidade < 12)
         {
             strcpy(msg, "IRQ2");
             write(write_fd, msg, strlen(msg) + 1);
