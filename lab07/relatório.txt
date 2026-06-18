@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------------
 
-[INF1316] LAB 10 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
+[INF1316] LAB 07 - Everton Pereira Militão 2320462, Lúcio Campos 2320955
 
 --------------------------------------------------------------------------------------
 1) Escreva um programa log_gen.c que usa void 
