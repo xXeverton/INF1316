@@ -95,6 +95,11 @@ void run_kernel(int read_fd, int write_fd)
     estado_processos[processo_atual] = 1;
     printf("Kernel: Iniciando a execução com %s (PID %d)\n", nomes[processo_atual], processos[processo_atual]);
 
+    // Contador para saber se quadro preencheu
+    int quadros_ocupados = 0;        // vai de 0 a 32
+    int ponteiro_fifo = 0;          // Aponta para o quadro (0 a 31) que será a próxima vítima
+
+
     // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
 
     while (1)
@@ -349,8 +354,36 @@ void run_kernel(int read_fd, int write_fd)
                     }
                     tamanho_swap--;
                     
-                    // A página agora está na RAM!
-                    tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
+                    // // A página agora está na RAM!
+                    // tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
+
+                    // O processo e a página que causaram o fault
+                    int pagina_solicitada = mem_processos[id_desbloqueado];
+
+                    // Cenário A: tem espaço na RAM
+                    if (quadros_ocupados < 32)
+                    {
+                        int quadro_livre = quadros_ocupados;
+
+                        // Atualiza a tabela de páginas do processo
+                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
+                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_livre;
+
+                        // Atualiza as estruturas globais de RAM
+                        memoria_ram[quadro_livre].id_processo = id_desbloqueado;
+                        memoria_ram[quadro_livre].pagina_logica = pagina_solicitada;
+
+                        ram_free[quadro_livre] = 0;
+
+                        quadros_ocupados++;
+
+                        printf(
+                            ">>> Kernel: Pagina %d do Processo %s carregada no Quadro %d.\\n",
+                            pagina_solicitada,
+                            nomes[id_desbloqueado],
+                            quadro_livre
+                        );
+                    }
                 }
             }
         }
