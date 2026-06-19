@@ -44,7 +44,7 @@ int ler_mensagem_pipe(int fd, char *buffer) {
 void run_kernel(int read_fd, int write_fd) {
     fcntl(read_fd, F_SETFL, O_NONBLOCK);
     signal(SIGTSTP, handle_sigtstp);
-    signal(SIGINT, handle_sigtstp);
+    signal(SIGINT, handle_sigtint);
 
     // 1. CONEXÃO COM A MEMÓRIA COMPARTILHADA (shmem) DAS APLICAÇÕES
     for (int i = 0; i < 5; i++) {
@@ -280,4 +280,9 @@ void handle_sigtstp(int sig) {
 
     printf("Retomando simulação...\n");
     printf("=======================================================\n\n");
+
+    void handle_sigint(int sig) {
+    printf("\n>>> Encerrando a simulação do KernelSim (Ctrl+C)...\n");
+    exit(0);
+    }
 }
