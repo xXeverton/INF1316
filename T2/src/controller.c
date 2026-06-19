@@ -57,6 +57,12 @@ void run_controller(int write_fd)
             strcpy(msg, "IRQ2");
             write(write_fd, msg, strlen(msg) + 1);
         }
+        // IRQ3: 10% de probabilidade 
+        else if (probabilidade < 10)
+        {
+            strcpy(msg, "IRQ3");
+            write(write_fd, msg, strlen(msg) + 1);
+        }
     }
 }
 

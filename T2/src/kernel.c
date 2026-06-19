@@ -8,13 +8,13 @@
 
 /*
  * KERNELSIM - Simulador de Kernel Preemptivo
- * 
+ *
  * Gerencia 5 processos de aplicação usando escalonamento Round-Robin com preemption.
  * Responde a três tipos de interrupções:
  * - IRQ0: TimeSlice (força troca de contexto)
  * - IRQ1: Hardware D1 completa uma operação (desbloqueia processos)
  * - IRQ2: Hardware D2 completa uma operação (desbloqueia processos)
- * 
+ *
  * Estados dos processos:
  * 0 = PRONTO (aguardando CPU)
  * 1 = EXECUTANDO (em posse da CPU)
@@ -85,6 +85,9 @@ void run_kernel(int read_fd, int write_fd)
     // Filas para processos bloqueados aguardando I/O
     int fila_d1[5], tamanho_d1 = 0;
     int fila_d2[5], tamanho_d2 = 0;
+    // Fila para guardar os ID's dos processos que estão
+    // à espera de páginas
+    int fila_swap[5], tamanho_swap = 0;
 
     // Escalonador Round-Robin: começa pelo primeiro processo
     int processo_atual = 0;
@@ -97,7 +100,7 @@ void run_kernel(int read_fd, int write_fd)
     while (1)
     {
         int status;
-        
+
         // Verifica se algum processo finalizou sua execução
         for (int i = 0; i < 5; i++)
         {
@@ -151,7 +154,9 @@ void run_kernel(int read_fd, int write_fd)
                     {
                         estado_processos[processo_atual] = 1;
                         kill(processos[processo_atual], SIGCONT);
-                        printf("--- Troca de Contexto por IRQ0: Agora rodando %s ---\n", nomes[processo_atual]);
+                        printf(
+                            "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
+                            nomes[processo_atual]);
                         break;
                     }
                 }
@@ -173,29 +178,52 @@ void run_kernel(int read_fd, int write_fd)
                 char pid_str[3];
                 int num_pc, num_mem;
                 sscanf(buffer, "UPDATE %s %d %d", pid_str, &num_pc, &num_mem);
-                int id_update = pid_str[1] - '1';
+                int id_processo = pid_str[1] - '1';
 
-                pc_processos[id_update] = num_pc;
-                mem_processos[id_update] = num_mem;
+                pc_processos[id_processo] = num_pc;
+                mem_processos[id_processo] = num_mem;
 
                 // ====================================================================
                 // T2: MMU SIMULADA E TRATAMENTO DE PAGE FAULT
                 // Só testamos se o processo estiver ativamente a correr (estado 1)
                 // ====================================================================
-                if (estado_processos[id_update] == 1) 
+                if (estado_processos[id_processo] == 1)
                 {
-                    // 1. Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
-                    if (tabelas_paginas[id_update][num_mem].valid == 0) 
+                    // Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
+                    if (tabelas_paginas[id_processo][num_mem].valid == 0)
                     {
                         // PAGE FAULT! A página não está na RAM.
-                        printf(">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n", nomes[id_update], num_mem);
-                        
+                        printf(
+                            ">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n",
+                            nomes[id_processo], num_mem);
+
                         // Incrementa o contador de faltas de página para o relatório final
-                        page_faults[id_update]++;
+                        page_faults[id_processo]++;
 
                         // (A LÓGICA DE BLOQUEAR O PROCESSO E PEDIR AO SWAP ENTRARÁ AQUI NA FASE 2)
                         // Por enquanto, apenas imprimimos a mensagem e deixamos o processo continuar,
                         // para garantir que não quebramos o escalonador do T1.
+                        estado_processos[id_processo] = 2; // Bloqueado
+
+                        // Pausa a execução do processo
+                        kill(processos[id_processo], SIGSTOP);
+
+                        fila_swap[tamanho_swap++] = id_processo;
+
+                        // Encontra o próximo processo PRONTO (em round-robin)
+                        for (int j = 0; j < 5; j++)
+                        {
+                            processo_atual = (processo_atual + 1) % 5;
+                            if (estado_processos[processo_atual] == 0)
+                            {
+                                estado_processos[processo_atual] = 1;
+                                kill(processos[processo_atual], SIGCONT);
+                                printf(
+                                    "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
+                                    nomes[processo_atual]);
+                                break;
+                            }
+                        }
                     }
                     else
                     {
@@ -249,7 +277,9 @@ void run_kernel(int read_fd, int write_fd)
                         {
                             estado_processos[processo_atual] = 1;
                             kill(processos[processo_atual], SIGCONT);
-                            printf("--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n", nomes[processo_atual]);
+                            printf(
+                                "--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n",
+                                nomes[processo_atual]);
                             break;
                         }
                     }
@@ -264,8 +294,10 @@ void run_kernel(int read_fd, int write_fd)
                     // Desbloqueia o primeiro processo que está aguardando D1
                     int id_acordado = fila_d1[0];
                     estado_processos[id_acordado] = 0;
-                    printf(">>> Kernel: Hardware D1 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    
+                    printf(
+                        ">>> Kernel: Hardware D1 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
+                        nomes[id_acordado]);
+
                     // Remove o processo da fila (FIFO)
                     for (int k = 0; k < tamanho_d1 - 1; k++)
                     {
@@ -283,14 +315,42 @@ void run_kernel(int read_fd, int write_fd)
                     // Desbloqueia o primeiro processo que está aguardando D2
                     int id_acordado = fila_d2[0];
                     estado_processos[id_acordado] = 0;
-                    printf(">>> Kernel: Hardware D2 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_acordado]);
-                    
+                    printf(
+                        ">>> Kernel: Hardware D2 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
+                        nomes[id_acordado]);
+
                     // Remove o processo da fila (FIFO)
                     for (int k = 0; k < tamanho_d2 - 1; k++)
                     {
                         fila_d2[k] = fila_d2[k + 1];
                     }
                     tamanho_d2--;
+                }
+            }
+
+            // IRQ3: Disco termina de buscar a página
+            else if (strcmp(buffer, "IRQ3") == 0)
+            {
+                if (tamanho_swap > 0)
+                {
+                    // Desbloqueia o primeiro processo que está aguardando
+                    int id_desbloqueado = fila_swap[0];
+                    estado_processos[id_desbloqueado] = 0;
+                    printf
+                    (
+                        ">>> Kernel: Disco de Swap terminou (IRQ3)! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
+                        nomes[id_desbloqueado]
+                    );
+
+                    // Remove o processo da fila de espera deslocando os demais
+                    for (int k = 0; k < tamanho_swap - 1; k++)
+                    {
+                        fila_swap[k] = fila_swap[k + 1];
+                    }
+                    tamanho_swap--;
+                    
+                    // A página agora está na RAM!
+                    tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
                 }
             }
         }
