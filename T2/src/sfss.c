@@ -56,6 +56,16 @@ int main(int argc, char **argv) {
         error("ERRO no binding do servidor");
 
     printf(">>> SFSS (Servidor Stateless UDP) rodando na porta %d...\n", portno);
+
+    mkdir(ROOT_DIR, 0777);
+    char subdir[64];
+    for (int i = 0; i <= 5; i++) {
+        sprintf(subdir, "%s/A%d", ROOT_DIR, i);
+        mkdir(subdir, 0777);
+        sprintf(subdir, "%s/A%d/dir_teste", ROOT_DIR, i);
+        mkdir(subdir, 0777);
+    }
+
     printf(">>> Os arquivos serao salvos no diretorio base: %s\n", ROOT_DIR);
 
     clientlen = sizeof(clientaddr);
@@ -88,6 +98,8 @@ int main(int argc, char **argv) {
         } 
         else if (strncmp(msg.op_type, "WR-REQ", 6) == 0) {
             strcpy(msg.op_type, "WR-REP");
+
+            memset(msg.payload, 0, MAX_PAYLOAD);
             
             // Regra do enunciado: Se offset 0 e payload vazio, remove o arquivo
             if (msg.offset == 0 && strlen(msg.payload) == 0) {

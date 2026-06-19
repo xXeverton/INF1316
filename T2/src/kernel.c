@@ -44,6 +44,7 @@ int ler_mensagem_pipe(int fd, char *buffer) {
 void run_kernel(int read_fd, int write_fd) {
     fcntl(read_fd, F_SETFL, O_NONBLOCK);
     signal(SIGTSTP, handle_sigtstp);
+    signal(SIGINT, handle_sigtstp);
 
     // 1. CONEXÃO COM A MEMÓRIA COMPARTILHADA (shmem) DAS APLICAÇÕES
     for (int i = 0; i < 5; i++) {
@@ -60,9 +61,9 @@ void run_kernel(int read_fd, int write_fd) {
     }
     
     struct hostent *server = gethostbyname("127.0.0.1"); // localhost
-    bzero((char *) &serveraddr, sizeof(serveraddr));
+    memset(&serveraddr, 0, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    memcpy(&serveraddr.sin_addr.s_addr, server->h_addr, server->h_length);
     serveraddr.sin_port = htons(8080); // Porta padrão do nosso SFSS
 
     printf(">>> KernelSim iniciado como Micro-Kernel Cliente UDP na porta 8080 <<<\n");

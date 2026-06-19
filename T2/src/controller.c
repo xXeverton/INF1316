@@ -26,6 +26,7 @@ void run_controller(int write_fd)
 {
     // Ignora Ctrl+Z para evitar duplicar relatórios
     signal(SIGTSTP, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
 
     srand(time(NULL));
     char msg[10];
