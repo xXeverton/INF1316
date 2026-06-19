@@ -21,8 +21,8 @@
 
 // Variáveis globais que armazenam o estado dos processos
 pid_t processos[5];
-char disp_bloqueado[5];
-char oper_bloqueado[5];
+char disp_bloqueado[5] = {0};
+char oper_bloqueado[5] = {0};
 char *nomes[] = {"A1", "A2", "A3", "A4", "A5"};
 int estado_processos[5] = {0, 0, 0, 0, 0};
 

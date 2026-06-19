@@ -5,9 +5,9 @@
 #include <string.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include "common.h"
 
 #define MAX 2000
-#define MAX_PAYLOAD 1024
 
 int main(int argc, char *argv[]) {
     // Recebemos o nome do processo (A1-A5) e o fd do pipe para o Kernel
@@ -23,9 +23,9 @@ int main(int argc, char *argv[]) {
     int app_id = nome_app[1] - '0'; 
     key_t shm_key = 8000 + app_id; 
 
-    int shm_id = shmget(shm_key, MAX_PAYLOAD, IPC_CREAT | 0666);
+    int shm_id = shmget(shm_key, sizeof(SFP_Message), IPC_CREAT | 0666);
     char *shm_ptr = (char *) shmat(shm_id, NULL, 0);
-    memset(shm_ptr, 0, MAX_PAYLOAD); // Zera o buffer no início
+    memset(shm_ptr, 0, sizeof(SFP_Message));
 
     // Inicializa o gerador de números aleatórios com base no PID
     srand(time(NULL) ^ getpid());
@@ -33,9 +33,28 @@ int main(int argc, char *argv[]) {
     // ----- LOOP PRINCIPAL DO APLICATIVO -----
     for (pc = 1; pc <= MAX; pc++) {
         
-        if (strlen(shm_ptr) > 0) {
-            printf("\n<<< App [%s] ACORDOU! Dados recebidos da rede: %s >>>\n\n", nome_app, shm_ptr);
-            memset(shm_ptr, 0, MAX_PAYLOAD); // Limpa a memória para a próxima syscall
+        SFP_Message *resp = (SFP_Message *)shm_ptr;
+        if (resp->op_type[0] != '\0') {
+            printf("\n<<< App [%s] ACORDOU! Resposta recebida: %s >>>\n", nome_app, resp->op_type);
+            if (strncmp(resp->op_type, "DL-REP", 6) == 0) {
+                printf("    Listagem de %d itens:\n", resp->nrnames);
+                for (int i = 0; i < resp->nrnames; i++) {
+                    int inicio = resp->fstlstpositions[i][0];
+                    int fim    = resp->fstlstpositions[i][1];
+                    int tipo   = resp->fstlstpositions[i][2];
+                    printf("      [%d] %.*s (%s)\n", 
+                        i, fim - inicio + 1, &resp->payload[inicio],
+                        tipo == 1 ? "DIR" : "ARQ");
+                }
+            } else if (strncmp(resp->op_type, "RD-REP", 6) == 0) {
+                printf("    Leitura (offset %d): %.16s\n", resp->offset, resp->payload);
+            } else if (strncmp(resp->op_type, "WR-REP", 6) == 0) {
+                printf("    Escrita confirmada (offset %d)\n", resp->offset);
+            } else {
+                printf("    Diretorio atualizado: %s\n", resp->path);
+            }
+            memset(shm_ptr, 0, sizeof(SFP_Message));
+            printf("\n");
         }
 
         // 2. USO DA CPU (Acesso virtual)

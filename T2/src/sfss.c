@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
                 } else {
                     preencher_com_espacos_se_necessario(fd, msg.offset);
                     lseek(fd, msg.offset, SEEK_SET);
-                    write(fd, msg.payload, strlen(msg.payload)); // Escreve os dados
+                    write(fd, msg.payload, 16); // Escreve os dados
                     close(fd);
                 }
             }

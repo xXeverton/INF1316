@@ -10,7 +10,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <fcntl.h>
 #include "common.h"
+
 
 // --- NOVIDADES DO T2: FILAS DE REQUISIÇÃO ---
 // Guardam as respostas (REPs) que chegam da rede até o Hardware liberar (IRQ1 ou IRQ2)
@@ -40,12 +42,13 @@ int ler_mensagem_pipe(int fd, char *buffer) {
 
 // ----- INICIALIZAÇÃO DO KERNELSIM -----
 void run_kernel(int read_fd, int write_fd) {
+    fcntl(read_fd, F_SETFL, O_NONBLOCK);
     signal(SIGTSTP, handle_sigtstp);
 
     // 1. CONEXÃO COM A MEMÓRIA COMPARTILHADA (shmem) DAS APLICAÇÕES
     for (int i = 0; i < 5; i++) {
         key_t shm_key = 8000 + (i + 1); // Chaves 8001 a 8005
-        int shm_id = shmget(shm_key, MAX_PAYLOAD, IPC_CREAT | 0666);
+        int shm_id = shmget(shm_key, sizeof(SFP_Message), IPC_CREAT | 0666);
         shm_ptrs[i] = (char *) shmat(shm_id, NULL, 0);
     }
 
@@ -67,7 +70,7 @@ void run_kernel(int read_fd, int write_fd) {
     // =========================================================================
     // 3. CRIAÇÃO DOS PROCESSOS DE APLICAÇÃO (A1 a A5)
     // =========================================================================
-    char write_fd_str[2];
+    char write_fd_str[16];
     sprintf(write_fd_str, "%d", write_fd); // Converte o Pipe FD para string para o execl
 
     for (int i = 0; i < 5; i++) {
@@ -88,7 +91,7 @@ void run_kernel(int read_fd, int write_fd) {
     }
     // =========================================================================
 
-    char buffer[10];
+    char buffer[1024];
 
     // ----- LOOP INFINITO DO KERNEL -----
     while (1) {
@@ -99,13 +102,18 @@ void run_kernel(int read_fd, int write_fd) {
         int n = recvfrom(sockfd, &msg_rx, sizeof(SFP_Message), MSG_DONTWAIT, (struct sockaddr *) &serveraddr, &serverlen);
         
         if (n > 0) {
-            // Se chegou resposta da rede, não acordamos o processo na hora! Colocamos na fila correta:
             if (strncmp(msg_rx.op_type, "RD-REP", 6) == 0 || strncmp(msg_rx.op_type, "WR-REP", 6) == 0) {
-                file_request_queue[tamanho_file_queue++] = msg_rx;
-                printf(">>> Kernel: Resposta de ARQUIVO recebida da rede. Enfileirada na File-Queue.\n");
+                if (tamanho_file_queue < 9) {
+                    file_request_queue[tamanho_file_queue++] = msg_rx;
+                } else {
+                    printf("AVISO: File-Queue cheia! Resposta descartada.\n");
+                }
             } else {
-                dir_request_queue[tamanho_dir_queue++] = msg_rx;
-                printf(">>> Kernel: Resposta de DIRETÓRIO recebida da rede. Enfileirada na Dir-Queue.\n");
+                if (tamanho_dir_queue < 9) {
+                    dir_request_queue[tamanho_dir_queue++] = msg_rx;
+                } else {
+                    printf("AVISO: Dir-Queue cheia! Resposta descartada.\n");
+                }
             }
         }
 
@@ -135,12 +143,7 @@ void run_kernel(int read_fd, int write_fd) {
                     SFP_Message rep = file_request_queue[0]; // Pega a mais antiga (FIFO)
                     int owner_id = rep.owner;
 
-                    // Despeja os dados na Memória Compartilhada da aplicação dona
-                    if (strncmp(rep.op_type, "RD-REP", 6) == 0) {
-                        sprintf(shm_ptrs[owner_id], "Leitura do SFSS (Offset %d): %s", rep.offset, rep.payload);
-                    } else {
-                        sprintf(shm_ptrs[owner_id], "Escrita no SFSS confirmada! Offset final: %d", rep.offset);
-                    }
+                    memcpy(shm_ptrs[owner_id], &rep, sizeof(SFP_Message));
 
                     // Acorda a aplicação
                     estado_processos[owner_id] = 0; // Vai para PRONTO
@@ -158,12 +161,7 @@ void run_kernel(int read_fd, int write_fd) {
                     SFP_Message rep = dir_request_queue[0]; // Pega a mais antiga (FIFO)
                     int owner_id = rep.owner;
 
-                    // Despeja na Memória Compartilhada
-                    if (strncmp(rep.op_type, "DL-REP", 6) == 0) {
-                        sprintf(shm_ptrs[owner_id], "Listagem de %d itens: %s", rep.nrnames, rep.payload);
-                    } else {
-                        sprintf(shm_ptrs[owner_id], "Novo caminho de diretorio: %s", rep.path);
-                    }
+                    memcpy(shm_ptrs[owner_id], &rep, sizeof(SFP_Message));
 
                     estado_processos[owner_id] = 0; 
                     printf(">>> Kernel (IRQ2): Diretório concluído! Dados na ShMem de %s. Processo PRONTO.\n", nomes[owner_id]);
@@ -227,6 +225,23 @@ void run_kernel(int read_fd, int write_fd) {
             }
         }
 
+        // C. VERIFICAR SE TODOS OS PROCESSOS TERMINARAM
+        int finalizados = 0;
+        for (int i = 0; i < 5; i++) {
+            if (estado_processos[i] == 3) {
+                finalizados++;
+            } else if (waitpid(processos[i], NULL, WNOHANG) > 0) {
+                // WNOHANG = verifica sem bloquear
+                estado_processos[i] = 3; // TERMINADO
+                finalizados++;
+                printf(">>> Kernel: Processo %s terminou.\n", nomes[i]);
+            }
+        }
+
+        if (finalizados == 5) {
+            printf(">>> Kernel: Todos os processos finalizaram!\n");
+            break; // Sai do while(1)
+        }
         // Evita consumo abusivo de CPU no loop infinito
         usleep(1000); 
     }
