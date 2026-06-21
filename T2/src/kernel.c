@@ -98,6 +98,7 @@ void run_kernel(int read_fd, int write_fd)
     // Contador para saber se quadro preencheu
     int quadros_ocupados = 0;        // vai de 0 a 32
     int ponteiro_fifo = 0;          // Aponta para o quadro (0 a 31) que será a próxima vítima
+    int duplo_page_faults[5] = {0, 0, 0, 0, 0}; // Conta Page Faults que custaram "2 IRQ3"
 
 
     // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
@@ -383,6 +384,47 @@ void run_kernel(int read_fd, int write_fd)
                             nomes[id_desbloqueado],
                             quadro_livre
                         );
+                    }
+
+                    // Cenário B: Ram está cheia: FIFO
+                    else 
+                    {
+                        int quadro_vitima = ponteiro_fifo;
+
+                        // 1. identificar quem é o hóspede antigo (vítima)
+                        int id_vitima = memoria_ram[quadro_vitima].id_processo;
+                        int pag_vitima = memoria_ram[quadro_vitima].pagina_logica;
+
+                        // 2. invalida a página na tabela de páginas de vítimas (rebaixamento)
+                        tabelas_paginas[quadro_vitima][pag_vitima].valid = 0;
+                        tabelas_paginas[quadro_vitima][pag_vitima].frame = -1; // não está mais na ram
+
+                        // 3. Contagem de Duplo "IRQ3"
+                        // Se a pagina vítima tinha sido modificada, ela teria que ser salva no HD
+                        if (tabelas_paginas[id_vitima][quadro_vitima].modifyBit == 1)
+                        {
+                            duplo_page_faults[id_desbloqueado]++;
+                            // Nota: A "punição" em tempo vai para quem causou o Page Fault (o recém-desbloqueado)
+                            // Por enquanto, nosso simulador só conta, não vamos pausá-lo de novo.
+                        }
+
+                        // 4. Acomoda o novo processo no Quadro vítima (substituição)
+                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
+                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_vitima;
+
+                        memoria_ram[quadro_vitima].id_processo = id_desbloqueado;
+                        memoria_ram[quadro_vitima].pagina_logica = pagina_solicitada;
+
+                        printf(
+                        ">>> Kernel: [FIFO Substituicao] Expulsou Pagina %d de %s para carregar" 
+                        "Pagina %d de %s no Quadro %d.\n",
+                        pag_vitima, nomes[id_vitima],
+                        pagina_solicitada, nomes[id_desbloqueado],
+                        quadro_vitima
+                        );
+
+                        // 5. Gira a Roda do FIFO para a próxima rodada!
+                        ponteiro_fifo = (ponteiro_fifo + 1) % 32;
                     }
                 }
             }
