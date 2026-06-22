@@ -244,93 +244,80 @@ void run_kernel(int read_fd, int write_fd)
                 if (estado_processos[id_processo] == 1 && op_memoria != 'N')
                 {
                     // Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
+
+                    kill(processos[id_processo], SIGSTOP);
                     
                     if (tabelas_paginas[id_processo][num_mem].valid == 0)
                     {
                         // PAGE FAULT! A página não está na RAM.
                         printf(">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n", nomes[id_processo], num_mem);
                         page_faults[id_processo]++;
-
-                        // --- PASSO 4 DO ENUNCIADO: ESCOLHA DO QUADRO E ATUALIZAÇÃO ---
                         int quadro_escolhido = -1;
                         int precisa_dois_irq3 = 0;
-
+                        int ram_estava_cheia = 0; // Nova variável para controlar o fluxo!
+                        // --- PASSO 4.a: Procura espaço vazio ---
                         if (quadros_ocupados < 32) {
-                            // Cenário A: Tem espaço na RAM
                             quadro_escolhido = quadros_ocupados;
                             ram_free[quadro_escolhido] = 0;
                             quadros_ocupados++;
-                        } else {
-                            // Cenário B: RAM cheia, usar o algoritmo de substituição.
-                            // O professor pediu para testar separadamente, então basta comentar um e descomentar o outro!
+                        } 
+                        // --- PASSO 4.b: RAM cheia, usar algoritmo de substituição ---
+                        else {
+                            ram_estava_cheia = 1; // Marcamos que houve substituição
                             
-                            // Para testar o Algoritmo Global:
                             quadro_escolhido = global_substitute();
                             // quadro_escolhido = local_substitute(id_processo);
-
                             int id_vitima = memoria_ram[quadro_escolhido].id_processo;
                             int pag_vitima = memoria_ram[quadro_escolhido].pagina_logica;
-
                             // Verifica se a vítima estava modificada ANTES de invalidar
                             if (tabelas_paginas[id_vitima][pag_vitima].modifyBit == 1) {
                                 precisa_dois_irq3 = 1; // Vítima suja! Vai precisar de 2 IRQ3
                                 duplo_page_faults[id_processo]++;
                             }
-
                             // Invalida a página da vítima
                             tabelas_paginas[id_vitima][pag_vitima].valid = 0;
                             tabelas_paginas[id_vitima][pag_vitima].frame = -1;
                         }
-
-                        // Atualiza as tabelas com o novo quadro imediatamente (como pede o enunciado)
+                        // Atualiza as tabelas com o novo quadro (Comum a ambos os casos)
                         tabelas_paginas[id_processo][num_mem].valid = 1;
                         tabelas_paginas[id_processo][num_mem].frame = quadro_escolhido;
-                        
-                        // SE O PROCESSO CAUSOU O FAULT PARA FAZER UMA ESCRITA ('W'), A PÁGINA JÁ ENTRA SUJA (1).
-                        // SE FOI LEITURA ('R'), A PÁGINA ENTRA LIMPA (0).
                         if (op_memoria == 'W') {
                             tabelas_paginas[id_processo][num_mem].modifyBit = 1;
                         } else {
                             tabelas_paginas[id_processo][num_mem].modifyBit = 0;
                         }
-                        // Aproveitando para salvar o PC da carga (O campo 'when' exigido no enunciado!)
                         tabelas_paginas[id_processo][num_mem].when = num_pc; 
                         
                         memoria_ram[quadro_escolhido].id_processo = id_processo;
                         memoria_ram[quadro_escolhido].pagina_logica = num_mem;
-                        // Adiciona na fila de Swap COM O CONTADOR
-                        fila_swap[tamanho_swap] = id_processo;
-                        contador_swap[tamanho_swap] = precisa_dois_irq3; // 0 (1 IRQ3) ou 1 (2 IRQ3s)
-                        
-                        tamanho_swap++;
-
-                        // 1. Envia o sinal para pausar o processo na vida real
-                        kill(processos[id_processo], SIGSTOP);
-                        
-                        // 2. Atualiza na tabela do Kernel que ele agora está BLOQUEADO
-                        estado_processos[id_processo] = 2;
-                        // 3. Como ele parou, precisamos escolher o próximo processo para rodar
-                        if (processo_atual == id_processo)
-                        {
-                            for (int j = 0; j < 5; j++)
-                            {
-                                // Avança circularmente na lista de processos
-                                processo_atual = (processo_atual + 1) % 5;
-                                
-                                // Se o processo estiver PRONTO (0)
-                                if (estado_processos[processo_atual] == 0)
-                                {
-                                    // Muda o status para EXECUTANDO (1)
-                                    estado_processos[processo_atual] = 1;
-                                    
-                                    // Desbloqueia (acorda) o processo escolhido
-                                    kill(processos[processo_atual], SIGCONT);
-                                    printf("--- Troca de Contexto por Page Fault: Agora rodando %s ---\n", nomes[processo_atual]);
-                                    break;
+                        // --- PASSO 4.c: Ações dependentes de como o quadro foi obtido ---
+                        if (ram_estava_cheia) {
+                            // Se ocorreu substituição, o processo VAI PARA O SWAP e é BLOQUEADO
+                            fila_swap[tamanho_swap] = id_processo;
+                            contador_swap[tamanho_swap] = precisa_dois_irq3;
+                            tamanho_swap++;
+                            
+                            // (Correção 1: Bloqueio e Troca de contexto realocada para cá!)
+                            estado_processos[id_processo] = 2;
+                            if (processo_atual == id_processo) {
+                                for (int j = 0; j < 5; j++) {
+                                    processo_atual = (processo_atual + 1) % 5;
+                                    if (estado_processos[processo_atual] == 0) {
+                                        estado_processos[processo_atual] = 1;
+                                        kill(processos[processo_atual], SIGCONT);
+                                        printf("--- Troca de Contexto por Swap: Agora rodando %s ---\n", nomes[processo_atual]);
+                                        break;
+                                    }
                                 }
                             }
+                        } else {
+                            // PASSO 4.a: Apenas achou quadro vazio, atende imediatamente
+                            // O enunciado pede expressamente para dar SIGCONT aqui.
+                            kill(processos[id_processo], SIGCONT);
+                            printf(">>> Kernel: Quadro vazio preenchido (Sem ir pro Swap!). Processo %s continua executando.\n", nomes[id_processo]);
                         }
                     }
+
                     else
                     {
                         // =======================================
@@ -345,6 +332,8 @@ void run_kernel(int read_fd, int write_fd)
                         
                         // Atualiza o PC (when) para registrar a última vez que ela foi acessada
                         tabelas_paginas[id_processo][num_mem].when = num_pc;
+
+                        kill(processos[id_processo], SIGCONT);
                     }
                 }
                 // ====================================================================
