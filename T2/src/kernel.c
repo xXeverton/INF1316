@@ -1,11 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include "common.h"
-
 /*
  * KERNELSIM - Simulador de Kernel Preemptivo
  *
@@ -26,6 +18,21 @@
  * Lê uma mensagem completa do pipe terminada em \0
  * As mensagens vêm do InterController (interrupções) ou dos processos (UPDATE/SYSCALL)
  */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include "common.h"
+
+// Globais no kernel.c
+int fila_swap[5];
+int tamanho_swap = 0;
+int duplo_page_faults[5] = {0, 0, 0, 0, 0};
+
+
 int ler_mensagem_pipe(int fd, char *buffer)
 {
     int i = 0;
@@ -85,9 +92,6 @@ void run_kernel(int read_fd, int write_fd)
     // Filas para processos bloqueados aguardando I/O
     int fila_d1[5], tamanho_d1 = 0;
     int fila_d2[5], tamanho_d2 = 0;
-    // Fila para guardar os ID's dos processos que estão
-    // à espera de páginas
-    int fila_swap[5], tamanho_swap = 0;
 
     // Escalonador Round-Robin: começa pelo primeiro processo
     int processo_atual = 0;
@@ -96,10 +100,8 @@ void run_kernel(int read_fd, int write_fd)
     printf("Kernel: Iniciando a execução com %s (PID %d)\n", nomes[processo_atual], processos[processo_atual]);
 
     // Contador para saber se quadro preencheu
-    int quadros_ocupados = 0;        // vai de 0 a 32
-    int ponteiro_fifo = 0;          // Aponta para o quadro (0 a 31) que será a próxima vítima
-    int duplo_page_faults[5] = {0, 0, 0, 0, 0}; // Conta Page Faults que custaram "2 IRQ3"
-
+    int quadros_ocupados = 0;                   // vai de 0 a 32
+    int ponteiro_fifo = 0;                      // Aponta para o quadro (0 a 31) que será a próxima vítima
 
     // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
 
@@ -342,11 +344,9 @@ void run_kernel(int read_fd, int write_fd)
                     // Desbloqueia o primeiro processo que está aguardando
                     int id_desbloqueado = fila_swap[0];
                     estado_processos[id_desbloqueado] = 0;
-                    printf
-                    (
+                    printf(
                         ">>> Kernel: Disco de Swap terminou (IRQ3)! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
-                        nomes[id_desbloqueado]
-                    );
+                        nomes[id_desbloqueado]);
 
                     // Remove o processo da fila de espera deslocando os demais
                     for (int k = 0; k < tamanho_swap - 1; k++)
@@ -354,7 +354,7 @@ void run_kernel(int read_fd, int write_fd)
                         fila_swap[k] = fila_swap[k + 1];
                     }
                     tamanho_swap--;
-                    
+
                     // // A página agora está na RAM!
                     // tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
 
@@ -382,12 +382,11 @@ void run_kernel(int read_fd, int write_fd)
                             ">>> Kernel: Pagina %d do Processo %s carregada no Quadro %d.\\n",
                             pagina_solicitada,
                             nomes[id_desbloqueado],
-                            quadro_livre
-                        );
+                            quadro_livre);
                     }
 
                     // Cenário B: Ram está cheia: FIFO
-                    else 
+                    else
                     {
                         int quadro_vitima = ponteiro_fifo;
 
@@ -416,12 +415,11 @@ void run_kernel(int read_fd, int write_fd)
                         memoria_ram[quadro_vitima].pagina_logica = pagina_solicitada;
 
                         printf(
-                        ">>> Kernel: [FIFO Substituicao] Expulsou Pagina %d de %s para carregar" 
-                        "Pagina %d de %s no Quadro %d.\n",
-                        pag_vitima, nomes[id_vitima],
-                        pagina_solicitada, nomes[id_desbloqueado],
-                        quadro_vitima
-                        );
+                            ">>> Kernel: [FIFO Substituicao] Expulsou Pagina %d de %s para carregar"
+                            "Pagina %d de %s no Quadro %d.\n",
+                            pag_vitima, nomes[id_vitima],
+                            pagina_solicitada, nomes[id_desbloqueado],
+                            quadro_vitima);
 
                         // 5. Gira a Roda do FIFO para a próxima rodada!
                         ponteiro_fifo = (ponteiro_fifo + 1) % 32;
@@ -442,21 +440,48 @@ void handle_sigtstp(int sig)
 
     for (int i = 0; i < 5; i++)
     {
+
         printf("Processo [%s]:\n", nomes[i]);
         printf("  - PC Atual      : %d\n", pc_processos[i]);
         printf("  - Memoria       : m%02d\n", mem_processos[i]);
         printf("  - Acessos a D1  : %d vezes\n", io_counts_d1[i]);
         printf("  - Acessos a D2  : %d vezes\n", io_counts_d2[i]);
 
+        int esperando_swap = 0;
+        for (int k = 0; k < tamanho_swap; k++)
+        {
+            if (fila_swap[k] == i)
+            {
+                esperando_swap = 1;
+            }
+        }
+
         printf("  - Estado        : ");
         if (estado_processos[i] == 0)
             printf("PRONTO\n");
         else if (estado_processos[i] == 1)
             printf("EXECUTANDO (CPU)\n");
+
         else if (estado_processos[i] == 2)
-            printf("BLOQUEADO (Aguardando D%c, operacao %c)\n", disp_bloqueado[i], oper_bloqueado[i]);
+        {
+            if (esperando_swap == 1)
+            {
+                printf("BLOQUEADO (Aguardando Disco de Swap)\n");
+            }
+            else
+            {
+                printf("BLOQUEADO (Aguardando D%c, operacao %c)\n", disp_bloqueado[i], oper_bloqueado[i]);
+            }
+        }
+
         else if (estado_processos[i] == 3)
             printf("TERMINADO\n");
+
+       // ==========================================
+        // ESTATÍSTICAS DO TRABALHO 2
+        // ==========================================
+        printf("  - Page Faults   : %d totais\n", page_faults[i]);
+        printf("  - Duplos P.F.   : %d (custaram 2 IRQ3)\n", duplo_page_faults[i]);
 
         printf("-------------------------------------------------------\n");
     }
