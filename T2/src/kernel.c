@@ -301,9 +301,35 @@ void run_kernel(int read_fd, int write_fd)
                         // Adiciona na fila de Swap COM O CONTADOR
                         fila_swap[tamanho_swap] = id_processo;
                         contador_swap[tamanho_swap] = precisa_dois_irq3; // 0 (1 IRQ3) ou 1 (2 IRQ3s)
+                        
                         tamanho_swap++;
-                        // Bloqueia o processo e o resto do código de troca de contexto continua normal...
-                        // ... (MANTENHA OS KILLS E O FOR DE TROCA AQUI) ...
+
+                        // 1. Envia o sinal para pausar o processo na vida real
+                        kill(processos[id_processo], SIGSTOP);
+                        
+                        // 2. Atualiza na tabela do Kernel que ele agora está BLOQUEADO
+                        estado_processos[id_processo] = 2;
+                        // 3. Como ele parou, precisamos escolher o próximo processo para rodar
+                        if (processo_atual == id_processo)
+                        {
+                            for (int j = 0; j < 5; j++)
+                            {
+                                // Avança circularmente na lista de processos
+                                processo_atual = (processo_atual + 1) % 5;
+                                
+                                // Se o processo estiver PRONTO (0)
+                                if (estado_processos[processo_atual] == 0)
+                                {
+                                    // Muda o status para EXECUTANDO (1)
+                                    estado_processos[processo_atual] = 1;
+                                    
+                                    // Desbloqueia (acorda) o processo escolhido
+                                    kill(processos[processo_atual], SIGCONT);
+                                    printf("--- Troca de Contexto por Page Fault: Agora rodando %s ---\n", nomes[processo_atual]);
+                                    break;
+                                }
+                            }
+                        }
                     }
                     else
                     {

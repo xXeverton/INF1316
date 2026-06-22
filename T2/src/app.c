@@ -34,6 +34,8 @@ int main(int argc, char *argv[]) {
     // Assim cada processo tem sua própria sequência "aleatória"
     srand(time(NULL) ^ getpid());
 
+    mem = rand() % 16;
+
     for (pc = 1; pc <= MAX; pc++) {
         // O enunciado pede para acessar uma nova página lógica apenas com certa probabilidade (ex: 40%)
         if (rand() % 100 < 40) {
