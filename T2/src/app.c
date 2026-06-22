@@ -35,19 +35,30 @@ int main(int argc, char *argv[]) {
     srand(time(NULL) ^ getpid());
 
     for (pc = 1; pc <= MAX; pc++) {
-        // Simula acesso a um endereço de memória virtual aleatória (m00 a m15)
-        mem = rand() % 16; 
-        printf("App [%s] rodando... PC: %d, Memoria acessada: m%02d\n", nome_app, pc, mem);
-
-        // Comunica com o Kernel o estado atual do processo
-        // Isso permite que o Kernel tenha informações sempre atualizadas
-        // para exibir no relatório quando for pausado (Ctrl+Z)
-        if (write_fd != -1) {
-            char msg_update[50];
-            sprintf(msg_update, "UPDATE %s %d %d", nome_app, pc, mem);
-            write(write_fd, msg_update, strlen(msg_update) + 1);
+        // O enunciado pede para acessar uma nova página lógica apenas com certa probabilidade (ex: 40%)
+        if (rand() % 100 < 40) {
+            // Simula acesso a um endereço de memória virtual aleatória (m00 a m15)
+            mem = rand() % 16; 
+            
+            // Sorteio de Leitura (R) ou Escrita (W) baseado no enunciado
+            char op_memoria = (mem % 2 != 0) ? 'R' : 'W';
+            
+            printf("App [%s] rodando... PC: %d, Memoria acessada: m%02d (%c)\n", nome_app, pc, mem, op_memoria);
+            // Envia o UPDATE para o Kernel agora contendo a operação (R ou W) no final
+            if (write_fd != -1) {
+                char msg_update[50];
+                sprintf(msg_update, "UPDATE %s %d %d %c", nome_app, pc, mem, op_memoria);
+                write(write_fd, msg_update, strlen(msg_update) + 1);
+            }
+        } else {
+            // Se não acessou memória nova, ainda avisamos o Kernel para atualizar o PC da tela de status (Ctrl+Z)
+            // Enviamos 'N' (None) no lugar da operação
+            if (write_fd != -1) {
+                char msg_update[50];
+                sprintf(msg_update, "UPDATE %s %d %d N", nome_app, pc, mem);
+                write(write_fd, msg_update, strlen(msg_update) + 1);
+            }
         }
-        
         // Com pequena probabilidade (5%), o processo solicita uma operação de E/S
         // Isso pode bloquear o processo até o hardware (simulado) responder
         if (rand() % 100 < 5 && write_fd != -1) {

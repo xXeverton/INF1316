@@ -58,7 +58,7 @@ void run_controller(int write_fd)
             write(write_fd, msg, strlen(msg) + 1);
         }
         // IRQ3: 10% de probabilidade 
-        else if (probabilidade < 30)
+        else if (probabilidade < 65)
         {
             strcpy(msg, "IRQ3");
             write(write_fd, msg, strlen(msg) + 1);

@@ -34,6 +34,7 @@ typedef struct {
     int valid;      // 1 = Presente na RAM, 0 = Não está na RAM (Page Fault)
     int frame;      // Se valid==1, indica em qual quadro da RAM (0 a 31) a página está
     int modifyBit;  // 1 = Página foi modificada (Dirty), 0 = Página limpa
+    int when;
 } PageTableEntry;
 
 // A Tabela de Páginas Global para os 5 Processos

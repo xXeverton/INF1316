@@ -29,8 +29,11 @@
 
 // Globais no kernel.c
 int fila_swap[5];
+int contador_swap[5];
 int tamanho_swap = 0;
 int duplo_page_faults[5] = {0, 0, 0, 0, 0};
+int ponteiro_global = 0;
+int ponteiro_local[5] = {0, 0, 0, 0, 0};
 
 
 int ler_mensagem_pipe(int fd, char *buffer)
@@ -48,6 +51,58 @@ int ler_mensagem_pipe(int fd, char *buffer)
     }
     return 0; // Pipe vazio ou fechado
 }
+
+// Algoritmo Global: Prefere roubar quadros limpos, não importa de quem seja
+int global_substitute() {
+    // 1ª Passagem: Procura um quadro com modifyBit == 0 (página limpa)
+    for (int i = 0; i < 32; i++) {
+        int indice = (ponteiro_global + i) % 32;
+        int id_dono = memoria_ram[indice].id_processo;
+        int pag_dono = memoria_ram[indice].pagina_logica;
+        
+        // Se a página está limpa, escolhe ela para não tomar penalidade de 2 IRQ3
+        if (tabelas_paginas[id_dono][pag_dono].modifyBit == 0) {
+            ponteiro_global = (indice + 1) % 32;
+            return indice; 
+        }
+    }
+    
+    // 2ª Passagem: Se TODAS as páginas da RAM estão sujas, pega a primeira apontada pelo relógio
+    int quadro_vitima = ponteiro_global;
+    ponteiro_global = (ponteiro_global + 1) % 32;
+    return quadro_vitima;
+}
+
+// Algoritmo Local: Tenta substituir apenas as páginas do PRÓPRIO processo
+int local_substitute(int id_processo) {
+    // 1ª Passagem: Procura quadro do próprio processo com modifyBit == 0
+    for (int i = 0; i < 32; i++) {
+        int indice = (ponteiro_local[id_processo] + i) % 32;
+        
+        if (memoria_ram[indice].id_processo == id_processo) {
+            int pag_dono = memoria_ram[indice].pagina_logica;
+            if (tabelas_paginas[id_processo][pag_dono].modifyBit == 0) {
+                ponteiro_local[id_processo] = (indice + 1) % 32;
+                return indice;
+            }
+        }
+    }
+    
+    // 2ª Passagem: Se não achou limpa, pega a primeira suja que seja do próprio processo
+    for (int i = 0; i < 32; i++) {
+        int indice = (ponteiro_local[id_processo] + i) % 32;
+        
+        if (memoria_ram[indice].id_processo == id_processo) {
+            ponteiro_local[id_processo] = (indice + 1) % 32;
+            return indice;
+        }
+    }
+    
+    // Fallback: Se o processo não tem NENHUM quadro na RAM e precisa de um,
+    // ele é obrigado a usar o global para "roubar" seu primeiro quadro.
+    return global_substitute();
+}
+
 
 // ----- INICIALIZAÇÃO DO KERNELSIM E CRIAÇÃO DOS PROCESSOS -----
 
@@ -162,30 +217,21 @@ void run_kernel(int read_fd, int write_fd)
                     {
                         estado_processos[processo_atual] = 1;
                         kill(processos[processo_atual], SIGCONT);
-                        printf(
-                            "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
-                            nomes[processo_atual]);
+                        printf("--- Troca de Contexto por Page Fault: Agora rodando %s ---\n", nomes[processo_atual]);
                         break;
                     }
                 }
             }
 
-            // // UPDATE: Recebe informação de estado de um processo (PC e memória)
-            // else if (strncmp(buffer, "UPDATE", 6) == 0)
-            // {
-            //     int id = buffer[8] - '1';
-            //     int lido_pc, lido_mem;
-            //     sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
-
-            //     pc_processos[id] = lido_pc;
-            //     mem_processos[id] = lido_mem;
-            // }
-            // UPDATE: Recebe informação de estado de um processo (PC e memória)
+            // UPDATE: Recebe informação de estado de um processo (PC, memória e Operação R/W)
             else if (strncmp(buffer, "UPDATE", 6) == 0)
             {
                 char pid_str[3];
                 int num_pc, num_mem;
-                sscanf(buffer, "UPDATE %s %d %d", pid_str, &num_pc, &num_mem);
+                char op_memoria;
+                
+                // Agora o sscanf pega o %c no final da string!
+                sscanf(buffer, "UPDATE %s %d %d %c", pid_str, &num_pc, &num_mem, &op_memoria);
                 int id_processo = pid_str[1] - '1';
 
                 pc_processos[id_processo] = num_pc;
@@ -193,50 +239,86 @@ void run_kernel(int read_fd, int write_fd)
 
                 // ====================================================================
                 // T2: MMU SIMULADA E TRATAMENTO DE PAGE FAULT
-                // Só testamos se o processo estiver ativamente a correr (estado 1)
+                // Só testamos se o processo estiver ativamente a correr e se de fato houve acesso (diferente de N)
                 // ====================================================================
-                if (estado_processos[id_processo] == 1)
+                if (estado_processos[id_processo] == 1 && op_memoria != 'N')
                 {
                     // Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
+                    
                     if (tabelas_paginas[id_processo][num_mem].valid == 0)
                     {
                         // PAGE FAULT! A página não está na RAM.
-                        printf(
-                            ">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n",
-                            nomes[id_processo], num_mem);
-
-                        // Incrementa o contador de faltas de página para o relatório final
+                        printf(">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n", nomes[id_processo], num_mem);
                         page_faults[id_processo]++;
 
-                        // (A LÓGICA DE BLOQUEAR O PROCESSO E PEDIR AO SWAP ENTRARÁ AQUI NA FASE 2)
-                        // Por enquanto, apenas imprimimos a mensagem e deixamos o processo continuar,
-                        // para garantir que não quebramos o escalonador do T1.
-                        estado_processos[id_processo] = 2; // Bloqueado
+                        // --- PASSO 4 DO ENUNCIADO: ESCOLHA DO QUADRO E ATUALIZAÇÃO ---
+                        int quadro_escolhido = -1;
+                        int precisa_dois_irq3 = 0;
 
-                        // Pausa a execução do processo
-                        kill(processos[id_processo], SIGSTOP);
+                        if (quadros_ocupados < 32) {
+                            // Cenário A: Tem espaço na RAM
+                            quadro_escolhido = quadros_ocupados;
+                            ram_free[quadro_escolhido] = 0;
+                            quadros_ocupados++;
+                        } else {
+                            // Cenário B: RAM cheia, usar o algoritmo de substituição.
+                            // O professor pediu para testar separadamente, então basta comentar um e descomentar o outro!
+                            
+                            // Para testar o Algoritmo Global:
+                            quadro_escolhido = global_substitute();
+                            // quadro_escolhido = local_substitute(id_processo);
 
-                        fila_swap[tamanho_swap++] = id_processo;
+                            int id_vitima = memoria_ram[quadro_escolhido].id_processo;
+                            int pag_vitima = memoria_ram[quadro_escolhido].pagina_logica;
 
-                        // Encontra o próximo processo PRONTO (em round-robin)
-                        for (int j = 0; j < 5; j++)
-                        {
-                            processo_atual = (processo_atual + 1) % 5;
-                            if (estado_processos[processo_atual] == 0)
-                            {
-                                estado_processos[processo_atual] = 1;
-                                kill(processos[processo_atual], SIGCONT);
-                                printf(
-                                    "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
-                                    nomes[processo_atual]);
-                                break;
+                            // Verifica se a vítima estava modificada ANTES de invalidar
+                            if (tabelas_paginas[id_vitima][pag_vitima].modifyBit == 1) {
+                                precisa_dois_irq3 = 1; // Vítima suja! Vai precisar de 2 IRQ3
+                                duplo_page_faults[id_processo]++;
                             }
+
+                            // Invalida a página da vítima
+                            tabelas_paginas[id_vitima][pag_vitima].valid = 0;
+                            tabelas_paginas[id_vitima][pag_vitima].frame = -1;
                         }
+
+                        // Atualiza as tabelas com o novo quadro imediatamente (como pede o enunciado)
+                        tabelas_paginas[id_processo][num_mem].valid = 1;
+                        tabelas_paginas[id_processo][num_mem].frame = quadro_escolhido;
+                        
+                        // SE O PROCESSO CAUSOU O FAULT PARA FAZER UMA ESCRITA ('W'), A PÁGINA JÁ ENTRA SUJA (1).
+                        // SE FOI LEITURA ('R'), A PÁGINA ENTRA LIMPA (0).
+                        if (op_memoria == 'W') {
+                            tabelas_paginas[id_processo][num_mem].modifyBit = 1;
+                        } else {
+                            tabelas_paginas[id_processo][num_mem].modifyBit = 0;
+                        }
+                        // Aproveitando para salvar o PC da carga (O campo 'when' exigido no enunciado!)
+                        tabelas_paginas[id_processo][num_mem].when = num_pc; 
+                        
+                        memoria_ram[quadro_escolhido].id_processo = id_processo;
+                        memoria_ram[quadro_escolhido].pagina_logica = num_mem;
+                        // Adiciona na fila de Swap COM O CONTADOR
+                        fila_swap[tamanho_swap] = id_processo;
+                        contador_swap[tamanho_swap] = precisa_dois_irq3; // 0 (1 IRQ3) ou 1 (2 IRQ3s)
+                        tamanho_swap++;
+                        // Bloqueia o processo e o resto do código de troca de contexto continua normal...
+                        // ... (MANTENHA OS KILLS E O FOR DE TROCA AQUI) ...
                     }
                     else
                     {
+                        // =======================================
+                        // TRECHO DENTRO DO BLOCO DO PAGE HIT (ELSE)
+                        // =======================================
                         // PAGE HIT! A página já está num quadro da RAM. Tudo OK.
-                        // Podemos opcionalmente imprimir um log ou apenas não fazer nada.
+                        
+                        // Se o processo acessou a página para ESCREVER, agora sim ela fica suja!
+                        if (op_memoria == 'W') {
+                            tabelas_paginas[id_processo][num_mem].modifyBit = 1;
+                        }
+                        
+                        // Atualiza o PC (when) para registrar a última vez que ela foi acessada
+                        tabelas_paginas[id_processo][num_mem].when = num_pc;
                     }
                 }
                 // ====================================================================
@@ -336,93 +418,43 @@ void run_kernel(int read_fd, int write_fd)
                 }
             }
 
-            // IRQ3: Disco termina de buscar a página
+            // IRQ3: Disco termina de buscar/salvar a página
             else if (strcmp(buffer, "IRQ3") == 0)
             {
                 if (tamanho_swap > 0)
                 {
-                    // Desbloqueia o primeiro processo que está aguardando
-                    int id_desbloqueado = fila_swap[0];
-                    estado_processos[id_desbloqueado] = 0;
-                    printf(
-                        ">>> Kernel: Disco de Swap terminou (IRQ3)! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
-                        nomes[id_desbloqueado]);
-
-                    // Remove o processo da fila de espera deslocando os demais
-                    for (int k = 0; k < tamanho_swap - 1; k++)
-                    {
-                        fila_swap[k] = fila_swap[k + 1];
-                    }
-                    tamanho_swap--;
-
-                    // // A página agora está na RAM!
-                    // tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
-
-                    // O processo e a página que causaram o fault
-                    int pagina_solicitada = mem_processos[id_desbloqueado];
-
-                    // Cenário A: tem espaço na RAM
-                    if (quadros_ocupados < 32)
-                    {
-                        int quadro_livre = quadros_ocupados;
-
-                        // Atualiza a tabela de páginas do processo
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_livre;
-
-                        // Atualiza as estruturas globais de RAM
-                        memoria_ram[quadro_livre].id_processo = id_desbloqueado;
-                        memoria_ram[quadro_livre].pagina_logica = pagina_solicitada;
-
-                        ram_free[quadro_livre] = 0;
-
-                        quadros_ocupados++;
-
-                        printf(
-                            ">>> Kernel: Pagina %d do Processo %s carregada no Quadro %d.\\n",
-                            pagina_solicitada,
-                            nomes[id_desbloqueado],
-                            quadro_livre);
-                    }
-
-                    // Cenário B: Ram está cheia: FIFO
-                    else
-                    {
-                        int quadro_vitima = ponteiro_fifo;
-
-                        // 1. identificar quem é o hóspede antigo (vítima)
-                        int id_vitima = memoria_ram[quadro_vitima].id_processo;
-                        int pag_vitima = memoria_ram[quadro_vitima].pagina_logica;
-
-                        // 2. invalida a página na tabela de páginas de vítimas (rebaixamento)
-                        tabelas_paginas[quadro_vitima][pag_vitima].valid = 0;
-                        tabelas_paginas[quadro_vitima][pag_vitima].frame = -1; // não está mais na ram
-
-                        // 3. Contagem de Duplo "IRQ3"
-                        // Se a pagina vítima tinha sido modificada, ela teria que ser salva no HD
-                        if (tabelas_paginas[id_vitima][quadro_vitima].modifyBit == 1)
-                        {
-                            duplo_page_faults[id_desbloqueado]++;
-                            // Nota: A "punição" em tempo vai para quem causou o Page Fault (o recém-desbloqueado)
-                            // Por enquanto, nosso simulador só conta, não vamos pausá-lo de novo.
+                    int id_primeiro = fila_swap[0];
+                    
+                    if (contador_swap[0] > 0) {
+                        // Recebeu o primeiro IRQ3, mas precisava salvar a página suja antes!
+                        printf(">>> Kernel: Swap (IRQ3) salvou pagina suja. Processo %s tem que aguardar e volta pro final da fila.\n", nomes[id_primeiro]);
+                        
+                        // Decrementa o contador (agora é 0, no próximo IRQ3 ele vai passar)
+                        contador_swap[0]--;
+                        
+                        // Move o processo para o final da fila (Rotaciona a fila)
+                        int temp_id = fila_swap[0];
+                        int temp_cont = contador_swap[0];
+                        
+                        for (int k = 0; k < tamanho_swap - 1; k++) {
+                            fila_swap[k] = fila_swap[k + 1];
+                            contador_swap[k] = contador_swap[k + 1];
                         }
+                        
+                        fila_swap[tamanho_swap - 1] = temp_id;
+                        contador_swap[tamanho_swap - 1] = temp_cont;
+                    }
+                    else {
+                        // Contador é 0! A paginação terminou de fato. Desbloqueia o processo.
+                        estado_processos[id_primeiro] = 0;
+                        printf(">>> Kernel: Disco de Swap concluiu (IRQ3)! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n", nomes[id_primeiro]);
 
-                        // 4. Acomoda o novo processo no Quadro vítima (substituição)
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_vitima;
-
-                        memoria_ram[quadro_vitima].id_processo = id_desbloqueado;
-                        memoria_ram[quadro_vitima].pagina_logica = pagina_solicitada;
-
-                        printf(
-                            ">>> Kernel: [FIFO Substituicao] Expulsou Pagina %d de %s para carregar"
-                            "Pagina %d de %s no Quadro %d.\n",
-                            pag_vitima, nomes[id_vitima],
-                            pagina_solicitada, nomes[id_desbloqueado],
-                            quadro_vitima);
-
-                        // 5. Gira a Roda do FIFO para a próxima rodada!
-                        ponteiro_fifo = (ponteiro_fifo + 1) % 32;
+                        // Remove da fila de swap
+                        for (int k = 0; k < tamanho_swap - 1; k++) {
+                            fila_swap[k] = fila_swap[k + 1];
+                            contador_swap[k] = contador_swap[k + 1];
+                        }
+                        tamanho_swap--;
                     }
                 }
             }
