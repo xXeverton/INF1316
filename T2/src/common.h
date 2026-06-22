@@ -5,57 +5,66 @@
 
 /*
  * VARIÁVEIS GLOBAIS COMPARTILHADAS
- * 
- * Essas variáveis são compartilhadas entre o main.c (inicialização),
- * kernel.c (gerenciamento) e o handler de sinais. Permitem que o relatório
- * do Ctrl+Z (handle_sigtstp) acesse o estado completo de todos os processos.
  */
 
-extern pid_t processos[5];              // PIDs dos 5 processos de aplicação
-extern char disp_bloqueado[5];          // Dispositivo que cada processo está esperando
-extern char oper_bloqueado[5];          // Operação (R/W/X) que cada processo solicitou
-extern char *nomes[];                   // Nomes dos processos (A1-A5)
-extern int estado_processos[5];         // Estado de cada processo (PRONTO/EXECUTANDO/BLOQUEADO/TERMINADO)
+extern pid_t processos[5];
+extern char disp_bloqueado[5];
+extern char oper_bloqueado[5];
+extern char *nomes[];
+extern int estado_processos[5];
 
-extern int pc_processos[5];             // Program Counter de cada processo
-extern int mem_processos[5];            // Último endereço de memória acessado
-extern int io_counts_d1[5];             // Contador de acessos ao dispositivo D1
-extern int io_counts_d2[5];             // Contador de acessos ao dispositivo D2
+extern int pc_processos[5];
+extern int mem_processos[5];
+extern int io_counts_d1[5];
+extern int io_counts_d2[5];
 
-// Protótipos das funções principais
-void run_controller(int write_fd);      // InterController Sim: gera interrupções
-void run_kernel(int read_fd, int write_fd);  // KernelSim: gerencia os processos
-void handle_sigtstp(int sig);           // Handler de Ctrl+Z: exibe relatório
-int ler_mensagem_pipe(int fd, char *buffer);  // Lê mensagens do pipe
+// Protótipos
+void run_controller(int write_fd);
+void run_kernel(int read_fd, int write_fd);
+void handle_sigtstp(int sig);
+int ler_mensagem_pipe(int fd, char *buffer);
 
-// ESTRUTURAS DO TRABALHO 2: MEMÓRIA VIRTUAL E PAGINAÇÃO
-// Estrutura de uma Entrada da Tabela de Páginas (PTE - Page Table Entry)
-typedef struct {
-    int valid;      // 1 = Presente na RAM, 0 = Não está na RAM (Page Fault)
-    int frame;      // Se valid==1, indica em qual quadro da RAM (0 a 31) a página está
-    int modifyBit;  // 1 = Página foi modificada (Dirty), 0 = Página limpa
+/* ---------------------------------------------------------------
+ * ESTRUTURAS DE MEMÓRIA VIRTUAL (T2)
+ * --------------------------------------------------------------- */
+
+// Entrada da Tabela de Páginas (Page Table Entry)
+typedef struct
+{
+    int valid;     // 1 = na RAM, 0 = ausente (Page Fault)
+    int frame;     // índice do quadro em memoria_ram[] (-1 se inválido)
+    int modifyBit; // 1 = página foi escrita (dirty), 0 = limpa
+    int when;      // valor do PC do processo no momento do último acesso
 } PageTableEntry;
 
-// A Tabela de Páginas Global para os 5 Processos
-// Como temos 5 processos (A1 a A5) e cada um tem 16 páginas lógicas (0 a 15),
-// criamos uma Matriz (Array de Arrays) de structs.
-// Ex: tabelas_paginas[0][5] acessa a página lógica 5 do processo A1.
-extern PageTableEntry tabelas_paginas[5][16];
+extern PageTableEntry tabelas_paginas[5][16]; // TPx[processo][pagina_logica]
 
-// A Memória RAM Física e o Controle de Espaço Livre
-// O professor pediu um array RAM[32] e um RAM_free[32].
-// Vamos guardar qual Processo (PID simulado ou índice 0-4) e qual Página (0-15) 
-// estão ocupando cada quadro da RAM para facilitar o algoritmo de substituição depois.
-typedef struct {
-    int id_processo; // Qual processo é dono deste quadro (0 a 4)
-    int pagina_logica; // Qual página lógica está aqui dentro (0 a 15)
+// Quadro da memória física
+typedef struct
+{
+    int id_processo;   // índice do processo dono (0-4)
+    int pagina_logica; // qual página lógica está aqui (0-15)
 } QuadroRAM;
 
-extern QuadroRAM memoria_ram[32]; // A memória física
-extern int ram_free[32];          // 1 = Quadro Livre, 0 = Quadro Ocupado
+extern QuadroRAM memoria_ram[32];
+extern int ram_free[32]; // 1 = livre, 0 = ocupado
 
-// 4. Estatísticas para o Relatório do Ctrl+Z
-extern int page_faults[5];        // Conta quantos Page Faults cada processo sofreu
+// ---------------------------------------------------------------
+// Entrada da fila de swap: guarda processo E página solicitada,
+// além de um contador para o caso de "duplo IRQ3" (dirty eviction).
+// ---------------------------------------------------------------
+typedef struct
+{
+    int id_processo;    // quem está esperando
+    int pagina_logica;  // qual página está sendo carregada do swap
+    int irq3_pendentes; // 1 = ainda precisa de mais 1 IRQ3 (dirty), 0 = pronto
+} EntradaSwap;
 
+extern EntradaSwap fila_swap[20]; // fila de espera pelo disco de swap (FCFS)
+extern int tamanho_swap;
+
+// Estatísticas
+extern int page_faults[5];
+extern int duplo_page_faults[5];
 
 #endif

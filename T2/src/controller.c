@@ -7,63 +7,53 @@
 #include "common.h"
 
 /*
- * INTERCONTROLLER SIM - Simulador de Controlador de Interrupções
- * 
- * Este processo emula o hardware responsavel por gerar interrupções:
- * 
- * IRQ0 (TimeSlice): Gerado periodicamente a cada 500ms
- *       Informa ao Kernel que a fatia de tempo de um processo terminou,
- *       forçando uma troca de contexto (preemption).
- * 
- * IRQ1 (Dispositivo D1): 10% de probablidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D1 terminou.
- *       Como D1 é rápido, tem maior probabilidade que D2.
- * 
- * IRQ2 (Dispositivo D2): 5% de probabilidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D2 terminou.
- *       D2 é 20x mais lento que D1.
+ * INTERCONTROLLER SIM
+ *
+ * A cada 500ms gera interrupções com as probabilidades do enunciado T2:
+ *   IRQ0 → sempre        (TimeSlice)
+ *   IRQ1 → P = 10%       (D1 terminou)
+ *   IRQ2 → P =  5%       (D2 terminou)
+ *   IRQ3 → P = 50%       (Swap terminou) — frequente pois swap é rápido
+ *
+ * IRQ1, IRQ2 e IRQ3 são mutuamente exclusivos entre si dentro da mesma
+ * rodada de sorteio, mas todos podem coexistir com IRQ0.
  */
 
 void run_controller(int write_fd)
 {
-    // Ignora Ctrl+Z para evitar duplicar relatórios
-    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN); // Ignora Ctrl+Z no filho
 
-    srand(time(NULL));
-    char msg[50];
+    srand(time(NULL) ^ getpid());
 
     while (1)
     {
-        // Aguarda 500ms antes de gerar novas interrupções
-        usleep(500000);
-        
-        // IRQ0: TimeSlice
-        // Sempre gerado, sincroniza o escalonamento
-        strcpy(msg, "IRQ0");
-        write(write_fd, msg, strlen(msg) + 1);
+        usleep(500000); // 500ms
 
-        // Sorteia interrupções de E/S de forma aleatória
-        int probabilidade = rand() % 100;
+        // IRQ0: sempre (TimeSlice)
+        char msg[] = "IRQ0";
+        write(write_fd, msg, sizeof(msg));
 
-        // IRQ1: 10% de probabilidade (D1 é rápido)
-        if (probabilidade < 10)
+        // Sorteio para IRQ1, IRQ2, IRQ3 (mutuamente exclusivos)
+        int r = rand() % 100;
+
+        if (r < 10)
         {
-            strcpy(msg, "IRQ1");
-            write(write_fd, msg, strlen(msg) + 1);
+            // IRQ1: 10% — D1 terminou
+            char irq1[] = "IRQ1";
+            write(write_fd, irq1, sizeof(irq1));
         }
-        // IRQ2: 5% de probabilidade (D2 é lento)
-        else if (probabilidade < 15)
+        else if (r < 15)
         {
-            strcpy(msg, "IRQ2");
-            write(write_fd, msg, strlen(msg) + 1);
+            // IRQ2: 5% — D2 terminou
+            char irq2[] = "IRQ2";
+            write(write_fd, irq2, sizeof(irq2));
         }
-        // IRQ3: 10% de probabilidade 
-        else if (probabilidade < 30)
+        else if (r < 65)
         {
-            strcpy(msg, "IRQ3");
-            write(write_fd, msg, strlen(msg) + 1);
+            // IRQ3: 50% — Swap terminou (r de 15 a 64 → 50 valores)
+            char irq3[] = "IRQ3";
+            write(write_fd, irq3, sizeof(irq3));
         }
+        // else: os outros 35% → nenhuma interrupção extra neste ciclo
     }
 }
-
-

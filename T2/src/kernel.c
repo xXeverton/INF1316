@@ -1,24 +1,3 @@
-/*
- * KERNELSIM - Simulador de Kernel Preemptivo
- *
- * Gerencia 5 processos de aplicação usando escalonamento Round-Robin com preemption.
- * Responde a três tipos de interrupções:
- * - IRQ0: TimeSlice (força troca de contexto)
- * - IRQ1: Hardware D1 completa uma operação (desbloqueia processos)
- * - IRQ2: Hardware D2 completa uma operação (desbloqueia processos)
- *
- * Estados dos processos:
- * 0 = PRONTO (aguardando CPU)
- * 1 = EXECUTANDO (em posse da CPU)
- * 2 = BLOQUEADO (aguardando E/S)
- * 3 = TERMINADO (finalizou seus MAX ciclos)
- */
-
-/*
- * Lê uma mensagem completa do pipe terminada em \0
- * As mensagens vêm do InterController (interrupções) ou dos processos (UPDATE/SYSCALL)
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -27,36 +6,267 @@
 #include <signal.h>
 #include "common.h"
 
-// Globais no kernel.c
-int fila_swap[5];
-int tamanho_swap = 0;
-int duplo_page_faults[5] = {0, 0, 0, 0, 0};
+/*
+ * KERNELSIM - T2
+ *
+ * Estados dos processos:
+ *   0 = PRONTO      1 = EXECUTANDO
+ *   2 = BLOQUEADO   3 = TERMINADO
+ *
+ * Novidades do T2:
+ *   - Trata mensagem ACCESS (mem, op): MMU simulada + Page Fault
+ *   - Algoritmos global_substitute() e local_substitute()
+ *   - Fila de swap com contador irq3_pendentes para "dirty eviction"
+ *   - modifyBit atualizado a cada ACCESS de escrita
+ *   - campo when atualizado a cada page hit ou page fault resolvido
+ */
 
+// ── variáveis do kernel (extern no common.h) ──────────────────────────────
+
+// ── variáveis locais ao kernel ────────────────────────────────────────────
+static int fila_d1[5], tamanho_d1 = 0;
+static int fila_d2[5], tamanho_d2 = 0;
+static int quadros_ocupados = 0; // quantos dos 32 frames estão em uso
+static int processo_atual = 0;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ALGORITMOS DE SUBSTITUIÇÃO DE PÁGINA
+// ═══════════════════════════════════════════════════════════════════════════
+
+/*
+ * global_substitute()
+ * Escolhe a vítima entre TODOS os 32 quadros da RAM.
+ * Política: NRU simplificado — prefere páginas limpas (modifyBit=0)
+ *           sobre páginas sujas (modifyBit=1).
+ *           Dentro do mesmo grupo, escolhe a de menor "when" (LRU-like).
+ * Retorna o índice do quadro vítima (0-31).
+ */
+int global_substitute(void)
+{
+    int vitima = -1;
+    int menor_when = __INT_MAX__;
+
+    // Primeira passagem: procura página limpa (modifyBit == 0)
+    for (int f = 0; f < 32; f++)
+    {
+        int p = memoria_ram[f].id_processo;
+        int pg = memoria_ram[f].pagina_logica;
+        if (tabelas_paginas[p][pg].modifyBit == 0)
+        {
+            if (tabelas_paginas[p][pg].when < menor_when)
+            {
+                menor_when = tabelas_paginas[p][pg].when;
+                vitima = f;
+            }
+        }
+    }
+
+    // Segunda passagem: se todas sujas, escolhe a menos recentemente usada
+    if (vitima == -1)
+    {
+        menor_when = __INT_MAX__;
+        for (int f = 0; f < 32; f++)
+        {
+            int p = memoria_ram[f].id_processo;
+            int pg = memoria_ram[f].pagina_logica;
+            if (tabelas_paginas[p][pg].when < menor_when)
+            {
+                menor_when = tabelas_paginas[p][pg].when;
+                vitima = f;
+            }
+        }
+    }
+
+    return vitima;
+}
+
+/*
+ * local_substitute(id_processo)
+ * Escolhe a vítima SOMENTE entre as páginas do próprio processo Ax.
+ * Mesma política NRU: limpa primeiro, depois LRU.
+ * Se o processo ainda não tiver nenhuma página na RAM, cai no global.
+ */
+int local_substitute(int id_processo)
+{
+    int vitima = -1;
+    int menor_when = __INT_MAX__;
+
+    // Primeira passagem: página limpa do próprio processo
+    for (int f = 0; f < 32; f++)
+    {
+        if (memoria_ram[f].id_processo == id_processo)
+        {
+            int pg = memoria_ram[f].pagina_logica;
+            if (tabelas_paginas[id_processo][pg].modifyBit == 0 &&
+                tabelas_paginas[id_processo][pg].when < menor_when)
+            {
+                menor_when = tabelas_paginas[id_processo][pg].when;
+                vitima = f;
+            }
+        }
+    }
+
+    // Segunda passagem: página suja do próprio processo
+    if (vitima == -1)
+    {
+        menor_when = __INT_MAX__;
+        for (int f = 0; f < 32; f++)
+        {
+            if (memoria_ram[f].id_processo == id_processo)
+            {
+                int pg = memoria_ram[f].pagina_logica;
+                if (tabelas_paginas[id_processo][pg].when < menor_when)
+                {
+                    menor_when = tabelas_paginas[id_processo][pg].when;
+                    vitima = f;
+                }
+            }
+        }
+    }
+
+    // Se processo não tem páginas na RAM ainda → usa global
+    if (vitima == -1)
+        vitima = global_substitute();
+
+    return vitima;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRATAMENTO DE ACESSO À MEMÓRIA (MMU SIMULADA)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/*
+ * trata_acesso_memoria(id_processo, pagina_logica, op, pc_atual)
+ *
+ * Chamado quando o Kernel recebe ACCESS de um processo.
+ * Verifica a tabela de páginas e decide:
+ *   - Page Hit  → atualiza modifyBit/when, libera processo (SIGCONT).
+ *   - Page Fault → bloqueia processo, escolhe quadro (livre ou substituição),
+ *                  enfileira na Sw_Queue com irq3_pendentes correto.
+ */
+static void trata_acesso_memoria(int id, int pag, char op, int pc_atual)
+{
+    if (tabelas_paginas[id][pag].valid == 1)
+    {
+        // ── PAGE HIT ──────────────────────────────────────────────────────
+        printf("  [MMU] PAGE HIT: %s pag %d → frame %d\n",
+               nomes[id], pag, tabelas_paginas[id][pag].frame);
+
+        // Atualiza modifyBit se for escrita
+        if (op == 'W')
+            tabelas_paginas[id][pag].modifyBit = 1;
+
+        // Atualiza when (usado pelo algoritmo de substituição)
+        tabelas_paginas[id][pag].when = pc_atual;
+
+        // Processo continua normalmente — não bloqueia
+        return;
+    }
+
+    // ── PAGE FAULT ────────────────────────────────────────────────────────
+    page_faults[id]++;
+    printf(">>> [PAGE FAULT] %s pag %d — total faults: %d\n",
+           nomes[id], pag, page_faults[id]);
+
+    // Bloqueia o processo até o swap resolver
+    kill(processos[id], SIGSTOP);
+    estado_processos[id] = 2;
+
+    // Monta a entrada da fila de swap
+    EntradaSwap entrada;
+    entrada.id_processo = id;
+    entrada.pagina_logica = pag;
+
+    if (quadros_ocupados < 32)
+    {
+        // ── Caso A: existe quadro livre ───────────────────────────────────
+        // O quadro será atribuído quando IRQ3 chegar (swap lê a página).
+        // Precisa de 1 IRQ3.
+        entrada.irq3_pendentes = 1;
+        printf("  [SWAP] %s pag %d enfileirada (quadro livre disponível, 1 IRQ3)\n",
+               nomes[id], pag);
+    }
+    else
+    {
+        // ── Caso B: RAM cheia → precisa substituir ────────────────────────
+        // Escolhe a vítima (use global ou local conforme desejado)
+        int frame_vitima = global_substitute(); // ← troque por local_substitute(id) para testar local
+        int id_vitima = memoria_ram[frame_vitima].id_processo;
+        int pag_vitima = memoria_ram[frame_vitima].pagina_logica;
+
+        printf("  [SUBST] Vítima: %s pag %d (frame %d, dirty=%d)\n",
+               nomes[id_vitima], pag_vitima, frame_vitima,
+               tabelas_paginas[id_vitima][pag_vitima].modifyBit);
+
+        // Invalida a vítima na sua tabela de páginas
+        tabelas_paginas[id_vitima][pag_vitima].valid = 0;
+        tabelas_paginas[id_vitima][pag_vitima].frame = -1;
+
+        // Já reserva o frame para a nova página
+        tabelas_paginas[id][pag].frame = frame_vitima;
+
+        // Se a vítima estava suja (dirty), precisa ser salva no swap ANTES
+        // de carregar a nova página → dois IRQ3.
+        if (tabelas_paginas[id_vitima][pag_vitima].modifyBit == 1)
+        {
+            entrada.irq3_pendentes = 2;
+            duplo_page_faults[id]++;
+            printf("  [SWAP] Página vítima está SUJA → 2 IRQ3 necessários\n");
+        }
+        else
+        {
+            entrada.irq3_pendentes = 1;
+            printf("  [SWAP] Página vítima está LIMPA → 1 IRQ3 necessário\n");
+        }
+
+        // Limpa o dirty bit da vítima (será escrita no swap se dirty)
+        tabelas_paginas[id_vitima][pag_vitima].modifyBit = 0;
+    }
+
+    // Enfileira na Sw_Queue (FCFS)
+    fila_swap[tamanho_swap++] = entrada;
+
+    // Escala outro processo enquanto esse espera pelo swap
+    for (int j = 0; j < 5; j++)
+    {
+        processo_atual = (processo_atual + 1) % 5;
+        if (estado_processos[processo_atual] == 0)
+        {
+            estado_processos[processo_atual] = 1;
+            kill(processos[processo_atual], SIGCONT);
+            printf("  [SCHED] Troca para %s enquanto %s espera swap\n",
+                   nomes[processo_atual], nomes[id]);
+            break;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEITOR DE PIPE
+// ═══════════════════════════════════════════════════════════════════════════
 
 int ler_mensagem_pipe(int fd, char *buffer)
 {
     int i = 0;
     char c;
-    // Lê 1 único caractere por vez
     while (read(fd, &c, 1) > 0)
     {
         buffer[i++] = c;
         if (c == '\0')
-        {
-            return i; // Mensagem completa encontrada e separada!
-        }
+            return i;
     }
-    return 0; // Pipe vazio ou fechado
+    return 0;
 }
 
-// ----- INICIALIZAÇÃO DO KERNELSIM E CRIAÇÃO DOS PROCESSOS -----
+// ═══════════════════════════════════════════════════════════════════════════
+// KERNEL PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════════════
 
 void run_kernel(int read_fd, int write_fd)
 {
     signal(SIGTSTP, handle_sigtstp);
 
-    char buffer[50];
-    printf("KernelSim iniciado e a aguardar interrupções...\n");
+    printf("KernelSim T2 iniciado...\n");
 
     char fd_str[10];
     sprintf(fd_str, "%d", write_fd);
@@ -65,96 +275,145 @@ void run_kernel(int read_fd, int write_fd)
     for (int i = 0; i < 5; i++)
     {
         pid_t pid = fork();
-
         if (pid < 0)
         {
-            printf("Erro ao criar processo filho\n");
+            perror("fork");
             exit(1);
         }
 
         if (pid == 0)
         {
-            // Filho executa o programa da aplicação
             execl("./bin/app", "./bin/app", nomes[i], fd_str, NULL);
-            perror("Falha no execl\n");
+            perror("execl");
             exit(1);
         }
         else
         {
-            // Pai armazena o PID e pausa imediatamente
             processos[i] = pid;
             usleep(10000);
             kill(pid, SIGSTOP);
-            printf("Kernel: Processo %s (PID %d) criado e pausado\n", nomes[i], pid);
+            printf("Kernel: %s (PID %d) criado e pausado\n", nomes[i], pid);
         }
     }
 
-    // Filas para processos bloqueados aguardando I/O
-    int fila_d1[5], tamanho_d1 = 0;
-    int fila_d2[5], tamanho_d2 = 0;
+    // Inicia com o primeiro processo
+    kill(processos[0], SIGCONT);
+    estado_processos[0] = 1;
+    printf("Kernel: Iniciando com %s\n", nomes[0]);
 
-    // Escalonador Round-Robin: começa pelo primeiro processo
-    int processo_atual = 0;
-    kill(processos[processo_atual], SIGCONT);
-    estado_processos[processo_atual] = 1;
-    printf("Kernel: Iniciando a execução com %s (PID %d)\n", nomes[processo_atual], processos[processo_atual]);
+    char buffer[128];
 
-    // Contador para saber se quadro preencheu
-    int quadros_ocupados = 0;                   // vai de 0 a 32
-    int ponteiro_fifo = 0;                      // Aponta para o quadro (0 a 31) que será a próxima vítima
-
-    // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
-
+    // ── LOOP PRINCIPAL ──────────────────────────────────────────────────
     while (1)
     {
-        int status;
-
-        // Verifica se algum processo finalizou sua execução
+        // Verifica processos terminados
         for (int i = 0; i < 5; i++)
         {
-            if (estado_processos[i] != 3)
+            if (estado_processos[i] == 3)
+                continue;
+            int status;
+            if (waitpid(processos[i], &status, WNOHANG) > 0)
             {
-                if (waitpid(processos[i], &status, WNOHANG) > 0)
-                {
-                    estado_processos[i] = 3;
-                    printf("\n>>> Kernel: Processo %s finalizou sua execucao! <<<\n\n", nomes[i]);
-                }
+                estado_processos[i] = 3;
+                printf("\n>>> %s finalizou!\n\n", nomes[i]);
+            }
+        }
 
-                // Verifica se todos os processos terminaram
-                int processos_terminados = 0;
-                for (int i = 0; i < 5; i++)
-                {
-                    if (estado_processos[i] == 3)
-                        processos_terminados++;
-                }
+        int terminados = 0;
+        for (int i = 0; i < 5; i++)
+            if (estado_processos[i] == 3)
+                terminados++;
+        if (terminados == 5)
+        {
+            printf("\n=== TODOS OS PROCESSOS TERMINARAM ===\n");
+            kill(0, SIGKILL);
+        }
 
-                // Se todos terminaram, encerra o simulador
-                if (processos_terminados == 5)
+        if (ler_mensagem_pipe(read_fd, buffer) <= 0)
+            continue;
+
+        // ── IRQ0: TimeSlice ─────────────────────────────────────────────
+        if (strcmp(buffer, "IRQ0") == 0)
+        {
+            if (estado_processos[processo_atual] == 1)
+            {
+                kill(processos[processo_atual], SIGSTOP);
+                estado_processos[processo_atual] = 0;
+            }
+            for (int j = 0; j < 5; j++)
+            {
+                processo_atual = (processo_atual + 1) % 5;
+                if (estado_processos[processo_atual] == 0)
                 {
-                    printf("\n=======================================================\n");
-                    printf(">>> TODOS OS PROCESSOS APLICAÇÃO TERMINARAM <<<\n");
-                    printf(">>> INICIANDO DESLIGAMENTO DO KERNEL...     <<<\n");
-                    printf("=======================================================\n");
-                    kill(0, SIGKILL);
+                    estado_processos[processo_atual] = 1;
+                    kill(processos[processo_atual], SIGCONT);
+                    printf("--- IRQ0: Rodando %s ---\n", nomes[processo_atual]);
+                    break;
                 }
             }
         }
 
-        // Aguarda uma mensagem do pipe
-        if (ler_mensagem_pipe(read_fd, buffer) > 0)
+        // ── ACCESS: acesso à memória virtual (MMU simulada) ─────────────
+        else if (strncmp(buffer, "ACCESS", 6) == 0)
         {
+            // Formato: "ACCESS A2 5 W"
+            char nome[4];
+            int pag_logica;
+            char op;
+            sscanf(buffer, "ACCESS %s %d %c", nome, &pag_logica, &op);
+            int id = nome[1] - '1';
 
-            // IRQ0: TimeSlice terminou - força troca de contexto (preemption)
-            if (strcmp(buffer, "IRQ0") == 0)
+            // Atualiza mem do processo para o relatório
+            mem_processos[id] = pag_logica;
+
+            printf("Kernel recebeu: %s\n", buffer);
+            trata_acesso_memoria(id, pag_logica, op, pc_processos[id]);
+        }
+
+        // ── UPDATE: atualiza PC e mem para o relatório ──────────────────
+        else if (strncmp(buffer, "UPDATE", 6) == 0)
+        {
+            char nome[4];
+            int num_pc, num_mem;
+            sscanf(buffer, "UPDATE %s %d %d", nome, &num_pc, &num_mem);
+            int id = nome[1] - '1';
+            pc_processos[id] = num_pc;
+            mem_processos[id] = num_mem;
+        }
+
+        // ── SYSCALL: I/O para D1 ou D2 ──────────────────────────────────
+        else if (strncmp(buffer, "SYSCALL", 7) == 0)
+        {
+            printf("Kernel recebeu: %s\n", buffer);
+            // Formato: "SYSCALL A1 D1 R"
+            int id_bloqueado = buffer[9] - '1';
+            char disp = buffer[12];
+            char op = buffer[14];
+
+            disp_bloqueado[id_bloqueado] = disp;
+            oper_bloqueado[id_bloqueado] = op;
+
+            if (disp == '1')
+                io_counts_d1[id_bloqueado]++;
+            else
+                io_counts_d2[id_bloqueado]++;
+
+            kill(processos[id_bloqueado], SIGSTOP);
+            estado_processos[id_bloqueado] = 2;
+
+            if (disp == '1')
             {
-                // Pausa o processo atual se estiver executando
-                if (estado_processos[processo_atual] == 1)
-                {
-                    kill(processos[processo_atual], SIGSTOP);
-                    estado_processos[processo_atual] = 0;
-                }
+                fila_d1[tamanho_d1++] = id_bloqueado;
+                printf("Kernel: %s → Fila D1\n", nomes[id_bloqueado]);
+            }
+            else
+            {
+                fila_d2[tamanho_d2++] = id_bloqueado;
+                printf("Kernel: %s → Fila D2\n", nomes[id_bloqueado]);
+            }
 
-                // Encontra o próximo processo PRONTO (em round-robin)
+            if (processo_atual == id_bloqueado)
+            {
                 for (int j = 0; j < 5; j++)
                 {
                     processo_atual = (processo_atual + 1) % 5;
@@ -162,333 +421,202 @@ void run_kernel(int read_fd, int write_fd)
                     {
                         estado_processos[processo_atual] = 1;
                         kill(processos[processo_atual], SIGCONT);
-                        printf(
-                            "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
-                            nomes[processo_atual]);
+                        printf("--- SYSCALL: Troca para %s ---\n",
+                               nomes[processo_atual]);
                         break;
                     }
                 }
             }
+        }
 
-            // // UPDATE: Recebe informação de estado de um processo (PC e memória)
-            // else if (strncmp(buffer, "UPDATE", 6) == 0)
-            // {
-            //     int id = buffer[8] - '1';
-            //     int lido_pc, lido_mem;
-            //     sscanf(buffer, "UPDATE %*s %d %d", &lido_pc, &lido_mem);
-
-            //     pc_processos[id] = lido_pc;
-            //     mem_processos[id] = lido_mem;
-            // }
-            // UPDATE: Recebe informação de estado de um processo (PC e memória)
-            else if (strncmp(buffer, "UPDATE", 6) == 0)
+        // ── IRQ1: D1 terminou ───────────────────────────────────────────
+        else if (strcmp(buffer, "IRQ1") == 0)
+        {
+            if (tamanho_d1 > 0)
             {
-                char pid_str[3];
-                int num_pc, num_mem;
-                sscanf(buffer, "UPDATE %s %d %d", pid_str, &num_pc, &num_mem);
-                int id_processo = pid_str[1] - '1';
-
-                pc_processos[id_processo] = num_pc;
-                mem_processos[id_processo] = num_mem;
-
-                // ====================================================================
-                // T2: MMU SIMULADA E TRATAMENTO DE PAGE FAULT
-                // Só testamos se o processo estiver ativamente a correr (estado 1)
-                // ====================================================================
-                if (estado_processos[id_processo] == 1)
-                {
-                    // Verifica na Tabela de Páginas se a página Lógica (num_mem) está na RAM
-                    if (tabelas_paginas[id_processo][num_mem].valid == 0)
-                    {
-                        // PAGE FAULT! A página não está na RAM.
-                        printf(
-                            ">>> [PAGE FAULT] Processo %s (pag logica %d) nao esta na RAM!\n",
-                            nomes[id_processo], num_mem);
-
-                        // Incrementa o contador de faltas de página para o relatório final
-                        page_faults[id_processo]++;
-
-                        // (A LÓGICA DE BLOQUEAR O PROCESSO E PEDIR AO SWAP ENTRARÁ AQUI NA FASE 2)
-                        // Por enquanto, apenas imprimimos a mensagem e deixamos o processo continuar,
-                        // para garantir que não quebramos o escalonador do T1.
-                        estado_processos[id_processo] = 2; // Bloqueado
-
-                        // Pausa a execução do processo
-                        kill(processos[id_processo], SIGSTOP);
-
-                        fila_swap[tamanho_swap++] = id_processo;
-
-                        // Encontra o próximo processo PRONTO (em round-robin)
-                        for (int j = 0; j < 5; j++)
-                        {
-                            processo_atual = (processo_atual + 1) % 5;
-                            if (estado_processos[processo_atual] == 0)
-                            {
-                                estado_processos[processo_atual] = 1;
-                                kill(processos[processo_atual], SIGCONT);
-                                printf(
-                                    "--- Troca de Contexto por IRQ0: Agora rodando %s ---\n",
-                                    nomes[processo_atual]);
-                                break;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // PAGE HIT! A página já está num quadro da RAM. Tudo OK.
-                        // Podemos opcionalmente imprimir um log ou apenas não fazer nada.
-                    }
-                }
-                // ====================================================================
-            }
-
-            // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado
-            else if (strncmp(buffer, "SYSCALL", 7) == 0)
-            {
-                // Formato: "SYSCALL A1 D1 R"
-                printf("Kernel recebeu: %s \n", buffer);
-
-                int id_bloqueado = buffer[9] - '1';
-                disp_bloqueado[id_bloqueado] = buffer[12];
-                oper_bloqueado[id_bloqueado] = buffer[14];
-
-                // Conta os acessos a cada dispositivo (para o relatório)
-                if (buffer[12] == '1')
-                    io_counts_d1[id_bloqueado]++;
-                else if (buffer[12] == '2')
-                    io_counts_d2[id_bloqueado]++;
-
-                // Pausa o processo imediatamente
-                kill(processos[id_bloqueado], SIGSTOP);
-                estado_processos[id_bloqueado] = 2;
-
-                // Coloca na fila de espera do dispositivo apropriado
-                if (buffer[12] == '1')
-                {
-                    fila_d1[tamanho_d1++] = id_bloqueado;
-                    printf("Kernel: Processo %s foi bloqueado e colocado na Fila D1.\n", nomes[id_bloqueado]);
-                }
-                else if (buffer[12] == '2')
-                {
-                    fila_d2[tamanho_d2++] = id_bloqueado;
-                    printf("Kernel: Processo %s foi bloqueado e colocado na Fila D2.\n", nomes[id_bloqueado]);
-                }
-
-                // Se o processo que pediu I/O era o que estava executando,
-                // precisa escolher outro para rodar na CPU
-                if (processo_atual == id_bloqueado)
-                {
-                    for (int j = 0; j < 5; j++)
-                    {
-                        processo_atual = (processo_atual + 1) % 5;
-                        if (estado_processos[processo_atual] == 0)
-                        {
-                            estado_processos[processo_atual] = 1;
-                            kill(processos[processo_atual], SIGCONT);
-                            printf(
-                                "--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n",
-                                nomes[processo_atual]);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // IRQ1: Dispositivo D1 completou uma operação de E/S
-            else if (strcmp(buffer, "IRQ1") == 0)
-            {
-                if (tamanho_d1 > 0)
-                {
-                    // Desbloqueia o primeiro processo que está aguardando D1
-                    int id_acordado = fila_d1[0];
-                    estado_processos[id_acordado] = 0;
-                    printf(
-                        ">>> Kernel: Hardware D1 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
-                        nomes[id_acordado]);
-
-                    // Remove o processo da fila (FIFO)
-                    for (int k = 0; k < tamanho_d1 - 1; k++)
-                    {
-                        fila_d1[k] = fila_d1[k + 1];
-                    }
-                    tamanho_d1--;
-                }
-            }
-
-            // IRQ2: Dispositivo D2 completou uma operação de E/S
-            else if (strcmp(buffer, "IRQ2") == 0)
-            {
-                if (tamanho_d2 > 0)
-                {
-                    // Desbloqueia o primeiro processo que está aguardando D2
-                    int id_acordado = fila_d2[0];
-                    estado_processos[id_acordado] = 0;
-                    printf(
-                        ">>> Kernel: Hardware D2 terminou! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
-                        nomes[id_acordado]);
-
-                    // Remove o processo da fila (FIFO)
-                    for (int k = 0; k < tamanho_d2 - 1; k++)
-                    {
-                        fila_d2[k] = fila_d2[k + 1];
-                    }
-                    tamanho_d2--;
-                }
-            }
-
-            // IRQ3: Disco termina de buscar a página
-            else if (strcmp(buffer, "IRQ3") == 0)
-            {
-                if (tamanho_swap > 0)
-                {
-                    // Desbloqueia o primeiro processo que está aguardando
-                    int id_desbloqueado = fila_swap[0];
-                    estado_processos[id_desbloqueado] = 0;
-                    printf(
-                        ">>> Kernel: Disco de Swap terminou (IRQ3)! Processo %s foi DESBLOQUEADO e agora esta PRONTO.\n",
-                        nomes[id_desbloqueado]);
-
-                    // Remove o processo da fila de espera deslocando os demais
-                    for (int k = 0; k < tamanho_swap - 1; k++)
-                    {
-                        fila_swap[k] = fila_swap[k + 1];
-                    }
-                    tamanho_swap--;
-
-                    // // A página agora está na RAM!
-                    // tabelas_paginas[id_desbloqueado][mem_processos[id_desbloqueado]].valid = 0;
-
-                    // O processo e a página que causaram o fault
-                    int pagina_solicitada = mem_processos[id_desbloqueado];
-
-                    // Cenário A: tem espaço na RAM
-                    if (quadros_ocupados < 32)
-                    {
-                        int quadro_livre = quadros_ocupados;
-
-                        // Atualiza a tabela de páginas do processo
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_livre;
-
-                        // Atualiza as estruturas globais de RAM
-                        memoria_ram[quadro_livre].id_processo = id_desbloqueado;
-                        memoria_ram[quadro_livre].pagina_logica = pagina_solicitada;
-
-                        ram_free[quadro_livre] = 0;
-
-                        quadros_ocupados++;
-
-                        printf(
-                            ">>> Kernel: Pagina %d do Processo %s carregada no Quadro %d.\\n",
-                            pagina_solicitada,
-                            nomes[id_desbloqueado],
-                            quadro_livre);
-                    }
-
-                    // Cenário B: Ram está cheia: FIFO
-                    else
-                    {
-                        int quadro_vitima = ponteiro_fifo;
-
-                        // 1. identificar quem é o hóspede antigo (vítima)
-                        int id_vitima = memoria_ram[quadro_vitima].id_processo;
-                        int pag_vitima = memoria_ram[quadro_vitima].pagina_logica;
-
-                        // 2. invalida a página na tabela de páginas de vítimas (rebaixamento)
-                        tabelas_paginas[quadro_vitima][pag_vitima].valid = 0;
-                        tabelas_paginas[quadro_vitima][pag_vitima].frame = -1; // não está mais na ram
-
-                        // 3. Contagem de Duplo "IRQ3"
-                        // Se a pagina vítima tinha sido modificada, ela teria que ser salva no HD
-                        if (tabelas_paginas[id_vitima][quadro_vitima].modifyBit == 1)
-                        {
-                            duplo_page_faults[id_desbloqueado]++;
-                            // Nota: A "punição" em tempo vai para quem causou o Page Fault (o recém-desbloqueado)
-                            // Por enquanto, nosso simulador só conta, não vamos pausá-lo de novo.
-                        }
-
-                        // 4. Acomoda o novo processo no Quadro vítima (substituição)
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].valid = 1;
-                        tabelas_paginas[id_desbloqueado][pagina_solicitada].frame = quadro_vitima;
-
-                        memoria_ram[quadro_vitima].id_processo = id_desbloqueado;
-                        memoria_ram[quadro_vitima].pagina_logica = pagina_solicitada;
-
-                        printf(
-                            ">>> Kernel: [FIFO Substituicao] Expulsou Pagina %d de %s para carregar"
-                            "Pagina %d de %s no Quadro %d.\n",
-                            pag_vitima, nomes[id_vitima],
-                            pagina_solicitada, nomes[id_desbloqueado],
-                            quadro_vitima);
-
-                        // 5. Gira a Roda do FIFO para a próxima rodada!
-                        ponteiro_fifo = (ponteiro_fifo + 1) % 32;
-                    }
-                }
+                int id = fila_d1[0];
+                estado_processos[id] = 0;
+                printf(">>> IRQ1: %s DESBLOQUEADO (D1 pronto)\n", nomes[id]);
+                for (int k = 0; k < tamanho_d1 - 1; k++)
+                    fila_d1[k] = fila_d1[k + 1];
+                tamanho_d1--;
             }
         }
-    }
+
+        // ── IRQ2: D2 terminou ───────────────────────────────────────────
+        else if (strcmp(buffer, "IRQ2") == 0)
+        {
+            if (tamanho_d2 > 0)
+            {
+                int id = fila_d2[0];
+                estado_processos[id] = 0;
+                printf(">>> IRQ2: %s DESBLOQUEADO (D2 pronto)\n", nomes[id]);
+                for (int k = 0; k < tamanho_d2 - 1; k++)
+                    fila_d2[k] = fila_d2[k + 1];
+                tamanho_d2--;
+            }
+        }
+
+        // ── IRQ3: Swap terminou ─────────────────────────────────────────
+        else if (strcmp(buffer, "IRQ3") == 0)
+        {
+            if (tamanho_swap == 0)
+                continue;
+
+            EntradaSwap *frente = &fila_swap[0];
+
+            // Decrementa o contador de IRQ3 pendentes
+            frente->irq3_pendentes--;
+
+            if (frente->irq3_pendentes > 0)
+            {
+                // Ainda precisa de mais IRQ3s (era dirty) → volta para o FINAL da fila
+                printf(">>> IRQ3: %s pag %d ainda precisa de %d IRQ3(s) → volta ao fim da fila\n",
+                       nomes[frente->id_processo], frente->pagina_logica,
+                       frente->irq3_pendentes);
+                EntradaSwap tmp = *frente;
+                // Remove da frente
+                for (int k = 0; k < tamanho_swap - 1; k++)
+                    fila_swap[k] = fila_swap[k + 1];
+                // Coloca no fim
+                fila_swap[tamanho_swap - 1] = tmp;
+                // tamanho_swap não muda
+            }
+            else
+            {
+                // ── Página finalmente carregada na RAM ───────────────────
+                int id = frente->id_processo;
+                int pag = frente->pagina_logica;
+
+                // Remove da fila de swap
+                for (int k = 0; k < tamanho_swap - 1; k++)
+                    fila_swap[k] = fila_swap[k + 1];
+                tamanho_swap--;
+
+                // Determina o frame (pode já estar reservado se houve substituição)
+                int frame;
+                if (tabelas_paginas[id][pag].frame != -1)
+                {
+                    // Frame já foi reservado durante a substituição
+                    frame = tabelas_paginas[id][pag].frame;
+                }
+                else
+                {
+                    // Pega o próximo frame livre
+                    frame = quadros_ocupados;
+                    quadros_ocupados++;
+                }
+
+                // Atualiza a tabela de páginas do processo
+                tabelas_paginas[id][pag].valid = 1;
+                tabelas_paginas[id][pag].frame = frame;
+                tabelas_paginas[id][pag].modifyBit = 0; // recém-carregada = limpa
+                tabelas_paginas[id][pag].when = pc_processos[id];
+
+                // Atualiza a RAM
+                memoria_ram[frame].id_processo = id;
+                memoria_ram[frame].pagina_logica = pag;
+                ram_free[frame] = 0;
+
+                // Desbloqueia o processo
+                estado_processos[id] = 0;
+                printf(">>> IRQ3: %s pag %d carregada no frame %d — DESBLOQUEADO\n",
+                       nomes[id], pag, frame);
+            }
+        }
+    } // fim while
 }
 
-// ----- RELATÓRIO DE ESTADO (EXIBIDO AO APERTAR CTRL+Z) -----
+// ═══════════════════════════════════════════════════════════════════════════
+// RELATÓRIO CTRL+Z
+// ═══════════════════════════════════════════════════════════════════════════
 
 void handle_sigtstp(int sig)
 {
+    (void)sig;
     printf("\n\n=======================================================\n");
     printf("     SIMULAÇÃO PAUSADA (Ctrl+Z) - STATUS DO SISTEMA    \n");
     printf("=======================================================\n");
 
     for (int i = 0; i < 5; i++)
     {
-
         printf("Processo [%s]:\n", nomes[i]);
-        printf("  - PC Atual      : %d\n", pc_processos[i]);
-        printf("  - Memoria       : m%02d\n", mem_processos[i]);
-        printf("  - Acessos a D1  : %d vezes\n", io_counts_d1[i]);
-        printf("  - Acessos a D2  : %d vezes\n", io_counts_d2[i]);
+        printf("  PC           : %d\n", pc_processos[i]);
+        printf("  Memoria      : m%02d\n", mem_processos[i]);
+        printf("  Acessos D1   : %d\n", io_counts_d1[i]);
+        printf("  Acessos D2   : %d\n", io_counts_d2[i]);
+        printf("  Page Faults  : %d\n", page_faults[i]);
+        printf("  Duplos PF    : %d (custaram 2 IRQ3)\n", duplo_page_faults[i]);
 
-        int esperando_swap = 0;
+        // Verifica se está na fila de swap
+        int na_swap = 0, irq3_rest = 0;
         for (int k = 0; k < tamanho_swap; k++)
         {
-            if (fila_swap[k] == i)
+            if (fila_swap[k].id_processo == i)
             {
-                esperando_swap = 1;
+                na_swap = 1;
+                irq3_rest = fila_swap[k].irq3_pendentes;
+                break;
             }
         }
 
-        printf("  - Estado        : ");
-        if (estado_processos[i] == 0)
-            printf("PRONTO\n");
-        else if (estado_processos[i] == 1)
-            printf("EXECUTANDO (CPU)\n");
-
-        else if (estado_processos[i] == 2)
+        printf("  Estado       : ");
+        switch (estado_processos[i])
         {
-            if (esperando_swap == 1)
-            {
-                printf("BLOQUEADO (Aguardando Disco de Swap)\n");
-            }
+        case 0:
+            printf("PRONTO\n");
+            break;
+        case 1:
+            printf("EXECUTANDO\n");
+            break;
+        case 2:
+            if (na_swap)
+                printf("BLOQUEADO (Swap, %d IRQ3 restante(s))\n", irq3_rest);
             else
-            {
-                printf("BLOQUEADO (Aguardando D%c, operacao %c)\n", disp_bloqueado[i], oper_bloqueado[i]);
-            }
+                printf("BLOQUEADO (D%c, op=%c)\n",
+                       disp_bloqueado[i], oper_bloqueado[i]);
+            break;
+        case 3:
+            printf("TERMINADO\n");
+            break;
         }
 
-        else if (estado_processos[i] == 3)
-            printf("TERMINADO\n");
-
-       // ==========================================
-        // ESTATÍSTICAS DO TRABALHO 2
-        // ==========================================
-        printf("  - Page Faults   : %d totais\n", page_faults[i]);
-        printf("  - Duplos P.F.   : %d (custaram 2 IRQ3)\n", duplo_page_faults[i]);
+        // Páginas na RAM deste processo
+        printf("  Páginas na RAM: ");
+        int tem = 0;
+        for (int j = 0; j < 16; j++)
+        {
+            if (tabelas_paginas[i][j].valid)
+            {
+                printf("pag%d→f%d(%s) ", j, tabelas_paginas[i][j].frame,
+                       tabelas_paginas[i][j].modifyBit ? "D" : "L");
+                tem = 1;
+            }
+        }
+        if (!tem)
+            printf("nenhuma");
+        printf("\n");
 
         printf("-------------------------------------------------------\n");
     }
 
-    printf("\nPressione [ENTER] para retomar a simulação...\n");
-    getchar();
+    printf("\nPressione [ENTER] para retomar...\n");
 
-    printf("Retomando simulação...\n");
-    printf("=======================================================\n\n");
+    // Pausa todos os processos de aplicação enquanto relatório é exibido
+    for (int i = 0; i < 5; i++)
+        if (estado_processos[i] == 1 || estado_processos[i] == 0)
+            kill(processos[i], SIGSTOP);
+
+    // Lê um caractere do terminal para esperar o ENTER
+    char c;
+    read(STDIN_FILENO, &c, 1);
+
+    // Retoma o processo que estava executando
+    for (int i = 0; i < 5; i++)
+        if (estado_processos[i] == 0)
+            kill(processos[i], SIGCONT);
+    if (estado_processos[processo_atual] != 2 && estado_processos[processo_atual] != 3)
+        kill(processos[processo_atual], SIGCONT);
+
+    printf("Retomando...\n=======================================================\n\n");
 }
