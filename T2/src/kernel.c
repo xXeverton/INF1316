@@ -156,7 +156,6 @@ void run_kernel(int read_fd, int write_fd)
 
     // Contador para saber se quadro preencheu
     int quadros_ocupados = 0;                   // vai de 0 a 32
-    int ponteiro_fifo = 0;                      // Aponta para o quadro (0 a 31) que será a próxima vítima
 
     // ----- LOOP PRINCIPAL: PROCESSA INTERRUPÇÕES E GERENCIA PROCESSOS -----
 
@@ -217,7 +216,7 @@ void run_kernel(int read_fd, int write_fd)
                     {
                         estado_processos[processo_atual] = 1;
                         kill(processos[processo_atual], SIGCONT);
-                        printf("--- Troca de Contexto por Page Fault: Agora rodando %s ---\n", nomes[processo_atual]);
+                        printf("--- Troca de Contexto por fim do TimeSlice (IRQ0): Agora rodando %s ---\n", nomes[processo_atual]);
                         break;
                     }
                 }
