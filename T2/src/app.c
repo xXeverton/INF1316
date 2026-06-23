@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
         }
         // Com pequena probabilidade (5%), o processo solicita uma operação de E/S
         // Isso pode bloquear o processo até o hardware (simulado) responder
-        if (rand() % 100 < 5 && write_fd != -1) {
+        if (rand() % 100 < 15 && write_fd != -1) {
             int d = rand() % 100;
             char dis = (d % 2 == 0) ? '1' : '2';  // Escolhe entre D1 ou D2
             char op;                               // Tipo de operação
@@ -79,7 +79,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Simula uma unidade de tempo de processamento
-        sleep(1); 
+        usleep(500000); 
     }
     
     return 0;
