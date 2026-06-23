@@ -53,12 +53,13 @@ int ler_mensagem_pipe(int fd, char *buffer)
 }
 
 // Algoritmo Global: Prefere roubar quadros limpos, não importa de quem seja
-int global_substitute() {
+// Agora recebe o array QuadroRAM como parâmetro exigido pelo professor!
+int global_substitute(QuadroRAM RAM[]) {
     // 1ª Passagem: Procura um quadro com modifyBit == 0 (página limpa)
     for (int i = 0; i < 32; i++) {
         int indice = (ponteiro_global + i) % 32;
-        int id_dono = memoria_ram[indice].id_processo;
-        int pag_dono = memoria_ram[indice].pagina_logica;
+        int id_dono = RAM[indice].id_processo;
+        int pag_dono = RAM[indice].pagina_logica;
         
         // Se a página está limpa, escolhe ela para não tomar penalidade de 2 IRQ3
         if (tabelas_paginas[id_dono][pag_dono].modifyBit == 0) {
@@ -72,15 +73,14 @@ int global_substitute() {
     ponteiro_global = (ponteiro_global + 1) % 32;
     return quadro_vitima;
 }
-
 // Algoritmo Local: Tenta substituir apenas as páginas do PRÓPRIO processo
-int local_substitute(int id_processo) {
+int local_substitute(QuadroRAM RAM[], int id_processo) {
     // 1ª Passagem: Procura quadro do próprio processo com modifyBit == 0
     for (int i = 0; i < 32; i++) {
         int indice = (ponteiro_local[id_processo] + i) % 32;
         
-        if (memoria_ram[indice].id_processo == id_processo) {
-            int pag_dono = memoria_ram[indice].pagina_logica;
+        if (RAM[indice].id_processo == id_processo) {
+            int pag_dono = RAM[indice].pagina_logica;
             if (tabelas_paginas[id_processo][pag_dono].modifyBit == 0) {
                 ponteiro_local[id_processo] = (indice + 1) % 32;
                 return indice;
@@ -92,17 +92,15 @@ int local_substitute(int id_processo) {
     for (int i = 0; i < 32; i++) {
         int indice = (ponteiro_local[id_processo] + i) % 32;
         
-        if (memoria_ram[indice].id_processo == id_processo) {
+        if (RAM[indice].id_processo == id_processo) {
             ponteiro_local[id_processo] = (indice + 1) % 32;
             return indice;
         }
     }
     
-    // Fallback: Se o processo não tem NENHUM quadro na RAM e precisa de um,
-    // ele é obrigado a usar o global para "roubar" seu primeiro quadro.
-    return global_substitute();
+    // Fallback: Se o processo não tem NENHUM quadro na RAM, recai no global.
+    return global_substitute(RAM);
 }
-
 
 // ----- INICIALIZAÇÃO DO KERNELSIM E CRIAÇÃO DOS PROCESSOS -----
 
@@ -264,8 +262,9 @@ void run_kernel(int read_fd, int write_fd)
                         else {
                             ram_estava_cheia = 1; // Marcamos que houve substituição
                             
-                            quadro_escolhido = global_substitute();
-                            // quadro_escolhido = local_substitute(id_processo);
+                            quadro_escolhido = global_substitute(memoria_ram);
+                            // quadro_escolhido = local_substitute(memoria_ram, id_processo);
+
                             int id_vitima = memoria_ram[quadro_escolhido].id_processo;
                             int pag_vitima = memoria_ram[quadro_escolhido].pagina_logica;
                             // Verifica se a vítima estava modificada ANTES de invalidar
@@ -338,13 +337,27 @@ void run_kernel(int read_fd, int write_fd)
                 // ====================================================================
             }
 
-            // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado
+                        // SYSCALL: Um processo solicita uma operação de E/S e é bloqueado
             else if (strncmp(buffer, "SYSCALL", 7) == 0)
             {
                 // Formato: "SYSCALL A1 D1 R"
+                int id_bloqueado = buffer[9] - '1';
+
+                // ==========================================================
+                // CORREÇÃO DO BUG DO PIPE (CONDIÇÃO DE CORRIDA)
+                // ==========================================================
+                // Se o processo não estiver EXECUTANDO (status 1), 
+                // significa que ele já tomou um Page Fault e foi bloqueado
+                // pela MMU instantes antes dessa mensagem de Syscall chegar.
+                if (estado_processos[id_bloqueado] != 1) {
+                    // Nós simplesmente ignoramos esse "Syscall fantasma" 
+                    // e pulamos para ler a próxima mensagem do pipe.
+                    continue; 
+                }
+                // ==========================================================
+
                 printf("Kernel recebeu: %s \n", buffer);
 
-                int id_bloqueado = buffer[9] - '1';
                 disp_bloqueado[id_bloqueado] = buffer[12];
                 oper_bloqueado[id_bloqueado] = buffer[14];
 
@@ -381,9 +394,7 @@ void run_kernel(int read_fd, int write_fd)
                         {
                             estado_processos[processo_atual] = 1;
                             kill(processos[processo_atual], SIGCONT);
-                            printf(
-                                "--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n",
-                                nomes[processo_atual]);
+                            printf("--- Troca de Contexto FORCADA por Syscall: Agora rodando %s ---\n", nomes[processo_atual]);
                             break;
                         }
                     }
