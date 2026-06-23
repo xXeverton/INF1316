@@ -52,6 +52,7 @@ int main(int argc, char *argv[]) {
                 sprintf(msg_update, "UPDATE %s %d %d %c", nome_app, pc, mem, op_memoria);
                 write(write_fd, msg_update, strlen(msg_update) + 1);
             }
+            
         } else {
             // Se não acessou memória nova, ainda avisamos o Kernel para atualizar o PC da tela de status (Ctrl+Z)
             // Enviamos 'N' (None) no lugar da operação

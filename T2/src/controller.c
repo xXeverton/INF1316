@@ -6,24 +6,6 @@
 #include <signal.h>
 #include "common.h"
 
-/*
- * INTERCONTROLLER SIM - Simulador de Controlador de Interrupções
- * 
- * Este processo emula o hardware responsavel por gerar interrupções:
- * 
- * IRQ0 (TimeSlice): Gerado periodicamente a cada 500ms
- *       Informa ao Kernel que a fatia de tempo de um processo terminou,
- *       forçando uma troca de contexto (preemption).
- * 
- * IRQ1 (Dispositivo D1): 10% de probablidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D1 terminou.
- *       Como D1 é rápido, tem maior probabilidade que D2.
- * 
- * IRQ2 (Dispositivo D2): 5% de probabilidade a cada 500ms
- *       Indica que uma operação de E/S no dispositivo D2 terminou.
- *       D2 é 20x mais lento que D1.
- */
-
 void run_controller(int write_fd)
 {
     // Ignora Ctrl+Z para evitar duplicar relatórios
@@ -57,7 +39,7 @@ void run_controller(int write_fd)
             strcpy(msg, "IRQ2");
             write(write_fd, msg, strlen(msg) + 1);
         }
-        // IRQ3: 10% de probabilidade 
+        // IRQ3: 50% de probabilidade 
         else if (probabilidade < 65)
         {
             strcpy(msg, "IRQ3");
