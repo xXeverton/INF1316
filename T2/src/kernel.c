@@ -53,7 +53,6 @@ int ler_mensagem_pipe(int fd, char *buffer)
 }
 
 // Algoritmo Global: Prefere roubar quadros limpos, não importa de quem seja
-// Agora recebe o array QuadroRAM como parâmetro exigido pelo professor!
 int global_substitute(QuadroRAM RAM[]) {
     // 1ª Passagem: Procura um quadro com modifyBit == 0 (página limpa)
     for (int i = 0; i < 32; i++) {
@@ -318,9 +317,6 @@ void run_kernel(int read_fd, int write_fd)
 
                     else
                     {
-                        // =======================================
-                        // TRECHO DENTRO DO BLOCO DO PAGE HIT (ELSE)
-                        // =======================================
                         // PAGE HIT! A página já está num quadro da RAM. Tudo OK.
                         
                         // Se o processo acessou a página para ESCREVER, agora sim ela fica suja!
@@ -343,9 +339,6 @@ void run_kernel(int read_fd, int write_fd)
                 // Formato: "SYSCALL A1 D1 R"
                 int id_bloqueado = buffer[9] - '1';
 
-                // ==========================================================
-                // CORREÇÃO DO BUG DO PIPE (CONDIÇÃO DE CORRIDA)
-                // ==========================================================
                 // Se o processo não estiver EXECUTANDO (status 1), 
                 // significa que ele já tomou um Page Fault e foi bloqueado
                 // pela MMU instantes antes dessa mensagem de Syscall chegar.
