@@ -11,12 +11,13 @@
  * SIMULADOR DE KERNEL PREEMPTIVO (INF1316 - T1)
  * 
  * Este é o ponto de entrada do sistema. O programa cria dois processos principais:
- * 1. InterController Sim - Simula interrupções de hardware (IRQ0, IRQ1, IRQ2)
- * 2. KernelSim - Gerencia 5 processos de aplicação usando Round-Robin preemptivo
+ * 1. Controller Sim (controller) - Simula interrupções de hardware (IRQ0, IRQ1, IRQ2)
+ * 2. KernelSim (kernal) - Gerencia 5 processos de aplicação usando Round-Robin preemptivo
  * 
  * Alterações de contexto ocorrem quando:
  * - IRQ0 (TimeSlice a cada 500ms): o Kernel escolhe outro processo para executar
- * - IRQ1/IRQ2: processos bloqueados em I/O são desbloqueados
+ * - IRQ1/IRQ2: processos bloqueados em I/O são desbloqueados (simulam que querem fazer ação de entrada e saída)
+ * - IR3:
  * 
  * O usuario pode pausar a simulação com Ctrl+Z para ver o estado de todos
  * os processos (PC, memória, estado, acessos a dispositivos, etc.)
@@ -55,8 +56,10 @@ int main()
         exit(1);
     }
 
+    // inicializa a RAM dizendo que todos os quadros estão livres
     for (int i = 0; i < 32; i++) ram_free[i] = 1;
 
+    // inicializa a tabela de páginas dizendo que nenhum processo está na RAM (valid = 0)
     for (int i = 0; i < 5; i++)
     {
         for (int j = 0; j < 16; j++)
@@ -81,22 +84,23 @@ int main()
 
     if (pid_controller == 0)
     {
-        // CÓDIGO DO FILHO: InterController Sim
         // O filho não lê do pipe, então fecha o fd de leitura
         close(fd[0]);
-        run_controller(fd[1]);
+
+        run_controller(fd[1]); // chama a função do controller, então o filho = controller
+
         exit(0);
     }
+
     else 
     {
-        // CÓDIGO DO PAI: KernelSim
         // O pai gerencia a execução e ler as interrupções do filho
-        run_kernel(fd[0], fd[1]);
+        run_kernel(fd[0], fd[1]); // chama a função do kernel, então o pai = kernel
 
-        // Quando o Kernel termina (todos os processos finalizaram),
-        // mata o InterController e encerra a simulação
+        // Quando o Kernel termina (todos os processos finalizaram), mata o controller e encerra a simulação
         kill(pid_controller, SIGKILL);
         printf("Simulador encerrado com sucesso. Tchau!\n");
+        
         exit(0);
     }
 

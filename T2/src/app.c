@@ -27,18 +27,18 @@ int main(int argc, char *argv[]) {
     int write_fd = (argc > 2) ? atoi(argv[2]) : -1;
     
     int pc = 0;
-    int mem;
-    char msg_syscall[50];
+    int mem = rand() % 16; // ilusão da memória virtual
+    char msg_syscall[50]; // msg a ser escrita e mandada via pipe
     
     // Inicializa o gerador de números aleatórios com base no PID
     // Assim cada processo tem sua própria sequência "aleatória"
     srand(time(NULL) ^ getpid());
 
-    mem = rand() % 16;
-
     for (pc = 1; pc <= MAX; pc++) {
+
         // O enunciado pede para acessar uma nova página lógica apenas com certa probabilidade (ex: 40%)
         if (rand() % 100 < 40) {
+
             // Simula acesso a um endereço de memória virtual aleatória (m00 a m15)
             mem = rand() % 16; 
             
@@ -46,6 +46,7 @@ int main(int argc, char *argv[]) {
             char op_memoria = (mem % 2 != 0) ? 'R' : 'W';
             
             printf("App [%s] rodando... PC: %d, Memoria acessada: m%02d (%c)\n", nome_app, pc, mem, op_memoria);
+
             // Envia o UPDATE para o Kernel agora contendo a operação (R ou W) no final
             if (write_fd != -1) {
                 char msg_update[50];
@@ -62,6 +63,7 @@ int main(int argc, char *argv[]) {
                 write(write_fd, msg_update, strlen(msg_update) + 1);
             }
         }
+        
         // Com pequena probabilidade (5%), o processo solicita uma operação de E/S
         // Isso pode bloquear o processo até o hardware (simulado) responder
         if (rand() % 100 < 15 && write_fd != -1) {
