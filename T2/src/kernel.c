@@ -376,6 +376,7 @@ void run_kernel(int read_fd, int write_fd)
 
                         // primeiro procura espaço/quadro vazio na RAM
                         if (quadros_ocupados < 32) {
+                            
                             quadro_escolhido = quadros_ocupados;
                             ram_free[quadro_escolhido] = 0;
                             quadros_ocupados++;
@@ -487,7 +488,7 @@ void run_kernel(int read_fd, int write_fd)
                         // Decrementa o contador (agora é 0, no próximo IRQ3 ele vai passar)
                         contador_swap[0]--;
                         
-                        // Move o processo para o final da fila (Rotaciona a fila)
+                        // Move o processo para o final da fila
                         int temp_id = fila_swap[0];
                         int temp_cont = contador_swap[0];
                         
@@ -499,6 +500,7 @@ void run_kernel(int read_fd, int write_fd)
                         fila_swap[tamanho_swap - 1] = temp_id;
                         contador_swap[tamanho_swap - 1] = temp_cont;
                     }
+
                     else {
                         // Contador é 0! A paginação terminou de fato. Desbloqueia o processo.
                         estado_processos[id_primeiro] = 0;
